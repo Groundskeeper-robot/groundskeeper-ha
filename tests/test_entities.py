@@ -33,6 +33,11 @@ async def test_a_mowing_robot(hass, aioclient_mock, entry):
     assert hass.states.get("binary_sensor.groundskeeper_robot_online").state == STATE_ON
     assert hass.states.get("binary_sensor.groundskeeper_can_start").state == STATE_OFF
     assert hass.states.get("binary_sensor.groundskeeper_control").state == STATE_OFF
+    assert hass.states.get("binary_sensor.groundskeeper_needs_attention").state == STATE_OFF
+    assert hass.states.get("binary_sensor.groundskeeper_lost_contact").state == STATE_OFF
+    last = hass.states.get("sensor.groundskeeper_last_run")
+    assert dt_util.parse_datetime(last.state) == dt_util.utc_from_timestamp(summary()["last_run"]["ended"])
+    assert last.attributes["result"] == "finished"
 
 
 async def test_the_start_check_gives_the_panels_first_reason(hass, aioclient_mock, entry):
@@ -82,6 +87,8 @@ async def test_each_demo_activity(hass, aioclient_mock, entry, name, activity):
         ({"activity": "moving", "state": "moving"}, "idle"),
         ({"activity": "idle", "state": "idle"}, "idle"),
         ({"state": "error", "error_code": 7}, "error"),
+        ({"stalled": True, "stalled_s": 420}, "error"),
+        ({"rtk_wait": True, "stalled_s": 420}, "mowing"),
         ({"activity": None, "state": "waiting for data"}, STATE_UNKNOWN),
     ],
 )
@@ -156,3 +163,17 @@ async def test_unload(hass, aioclient_mock, entry):
     await set_up(hass, entry, aioclient_mock)
     assert await hass.config_entries.async_unload(entry.entry_id)
     assert entry.state is ConfigEntryState.NOT_LOADED
+
+
+async def test_a_stuck_robot_needs_attention(hass, aioclient_mock, entry):
+    await set_up(hass, entry, aioclient_mock, summary(stalled=True, stalled_s=420, lost_contact=True))
+    assert hass.states.get(MOWER).state == "error"
+    assert hass.states.get(MOWER).attributes["stalled_s"] == 420
+    assert hass.states.get("binary_sensor.groundskeeper_needs_attention").state == STATE_ON
+    assert hass.states.get("binary_sensor.groundskeeper_lost_contact").state == STATE_ON
+
+
+async def test_waiting_for_the_rtk_fix_is_not_stuck(hass, aioclient_mock, entry):
+    await set_up(hass, entry, aioclient_mock, summary(rtk_wait=True, stalled_s=420))
+    assert hass.states.get("binary_sensor.groundskeeper_needs_attention").state == STATE_OFF
+    assert hass.states.get("binary_sensor.groundskeeper_waiting_for_rtk_fix").state == STATE_ON

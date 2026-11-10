@@ -49,6 +49,24 @@ BINARY_SENSORS: tuple[GroundskeeperBinaryDescription, ...] = (
         value_fn=robot_online,
     ),
     GroundskeeperBinaryDescription(
+        key="needs_attention",
+        translation_key="needs_attention",
+        device_class=BinarySensorDeviceClass.PROBLEM,
+        value_fn=lambda d: bool(d.get("stalled")),
+    ),
+    GroundskeeperBinaryDescription(
+        key="lost_contact",
+        translation_key="lost_contact",
+        device_class=BinarySensorDeviceClass.PROBLEM,
+        value_fn=lambda d: bool(d.get("lost_contact")),
+    ),
+    GroundskeeperBinaryDescription(
+        key="rtk_wait",
+        translation_key="rtk_wait",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda d: bool(d.get("rtk_wait")),
+    ),
+    GroundskeeperBinaryDescription(
         key="can_start",
         translation_key="can_start",
         value_fn=_can_start,

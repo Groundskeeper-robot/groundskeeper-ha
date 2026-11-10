@@ -6,7 +6,6 @@ safety checks and the audit log.
 
 from __future__ import annotations
 
-import hashlib
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -44,11 +43,6 @@ def normalize_url(url: str) -> str:
     if parts.scheme not in ("http", "https") or not parts.hostname:
         raise ValueError(url)
     return url
-
-
-def robot_id(serial: str) -> str:
-    """A stable id for the robot that is not its serial number, so the serial never lands in Home Assistant."""
-    return hashlib.sha256(serial.encode()).hexdigest()[:16]
 
 
 class GroundskeeperClient:

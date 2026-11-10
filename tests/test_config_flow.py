@@ -5,7 +5,6 @@ from __future__ import annotations
 import aiohttp
 import pytest
 
-from custom_components.groundskeeper.api import robot_id
 from custom_components.groundskeeper.const import DOMAIN
 from homeassistant import config_entries
 from homeassistant.const import CONF_API_TOKEN, CONF_URL, CONF_VERIFY_SSL
@@ -28,8 +27,7 @@ async def test_a_panel_address_and_token_make_an_entry(hass, aioclient_mock):
     )
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert result["data"] == {CONF_URL: URL, CONF_API_TOKEN: TOKEN, CONF_VERIFY_SSL: True}
-    assert result["result"].unique_id == robot_id("YB0000DEMO0001")
-    assert "YB0000DEMO0001" not in str(result["data"]) and result["result"].unique_id != "YB0000DEMO0001"
+    assert result["result"].unique_id == summary()["robot_id"]
     assert aioclient_mock.mock_calls[0][3]["Authorization"] == f"Bearer {TOKEN}"
 
 
@@ -41,7 +39,7 @@ async def test_a_panel_address_and_token_make_an_entry(hass, aioclient_mock):
         ({"status": 404}, "panel_too_old"),
         ({"json": {"detail": "not a summary"}}, "panel_too_old"),
         ({"json": {**summary(), "api": 2}}, "unsupported_api"),
-        ({"json": {**summary(), "sn": None}}, "no_robot"),
+        ({"json": {**summary(), "robot_id": None}}, "no_robot"),
         ({"status": 500}, "cannot_connect"),
         ({"exc": aiohttp.ClientConnectionError()}, "cannot_connect"),
         ({"exc": TimeoutError()}, "cannot_connect"),
@@ -92,7 +90,7 @@ async def test_a_new_token_after_a_refusal(hass, aioclient_mock, entry):
 
 async def test_a_token_for_another_robot_is_refused_on_reauth(hass, aioclient_mock, entry):
     entry.add_to_hass(hass)
-    aioclient_mock.get(SUMMARY_URL, json=summary(sn="YB0000DEMO0002"))
+    aioclient_mock.get(SUMMARY_URL, json=summary(robot_id="0123456789abcdef"))
     result = await entry.start_reauth_flow(hass)
     result = await hass.config_entries.flow.async_configure(result["flow_id"], {CONF_API_TOKEN: "gk_other"})
     assert result["type"] is FlowResultType.ABORT and result["reason"] == "wrong_robot"

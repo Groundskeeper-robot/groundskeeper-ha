@@ -18,7 +18,6 @@ from .api import (
     PanelTooOld,
     UnsupportedApi,
     normalize_url,
-    robot_id,
 )
 from .const import DOMAIN, LOGGER
 
@@ -42,13 +41,13 @@ class GroundskeeperConfigFlow(ConfigFlow, domain=DOMAIN):
     VERSION = 1
 
     async def _check(self, url: str, token: str, verify_ssl: bool) -> str:
-        """The robot's id (not its serial) if the panel answers with this token."""
+        """The panel's id for the robot (a hash of its serial, never the serial) if it answers with this token."""
         client = GroundskeeperClient(async_get_clientsession(self.hass, verify_ssl=verify_ssl), url, token)
         data = await client.summary()
-        serial = data.get("sn")
-        if not serial:
+        rid = data.get("robot_id")
+        if not isinstance(rid, str) or not rid:
             raise NoRobot
-        return robot_id(serial)
+        return rid
 
     async def _errors_for(self, url: str, token: str, verify_ssl: bool) -> tuple[str | None, dict[str, str]]:
         try:

@@ -42,6 +42,9 @@
     "binary_sensor": {
       "running": { "name": "Run in progress" },
       "robot_online": { "name": "Robot online" },
+      "needs_attention": { "name": "Needs attention" },
+      "lost_contact": { "name": "Lost contact" },
+      "rtk_wait": { "name": "Waiting for RTK fix" },
       "can_start": { "name": "Can start" },
       "local_link": { "name": "Local link" },
       "control": { "name": "Control" },

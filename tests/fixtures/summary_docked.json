@@ -48,18 +48,19 @@
   "head": "Mower Pro",
   "held": null,
   "last_run": {
-    "distance_m": 1920.2,
-    "end_reason": null,
-    "ended": null,
-    "id": 4,
-    "rtk_fixed_pct": 100.0,
-    "started": 1794277617.3951156
+    "distance_m": 2650.4,
+    "end_reason": "finished",
+    "ended": 1794197000.0,
+    "id": 3,
+    "rtk_fixed_pct": 99.6,
+    "started": 1794190000.0
   },
   "lawn": {
     "dry_by": null,
     "state": "Dry"
   },
   "local_link": true,
+  "lost_contact": false,
   "next_window": {
     "active": false,
     "auto_start": false,
@@ -72,18 +73,21 @@
   "pause_reason": null,
   "pending_confirm": false,
   "plan_error": null,
+  "robot_id": "ee58baf544eda8a1",
   "rtk": {
     "label": "single point",
     "sats": 24
   },
+  "rtk_wait": false,
   "run": {
     "distance_m": 2145.2,
     "id": 4,
     "started": 1794277617.3951156
   },
   "running": true,
-  "sn": "YB0000DEMO0001",
   "snapshot_age_s": 1.0,
+  "stalled": false,
+  "stalled_s": 0,
   "state": "docked, charging",
   "version": "0.19.5"
 }

@@ -11,7 +11,6 @@ from typing import Any
 import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-from custom_components.groundskeeper.api import robot_id
 from custom_components.groundskeeper.const import DOMAIN, SUMMARY_PATH
 from homeassistant.const import CONF_API_TOKEN, CONF_URL, CONF_VERIFY_SSL
 
@@ -38,7 +37,7 @@ def entry() -> MockConfigEntry:
     return MockConfigEntry(
         domain=DOMAIN,
         title="Groundskeeper",
-        unique_id=robot_id(summary()["sn"]),
+        unique_id=summary()["robot_id"],
         data={CONF_URL: URL, CONF_API_TOKEN: TOKEN, CONF_VERIFY_SSL: True},
     )
 

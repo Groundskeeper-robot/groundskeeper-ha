@@ -2,6 +2,7 @@
   "entity": {
     "binary_sensor": {
       "can_start": { "default": "mdi:play-circle-outline" },
+      "rtk_wait": { "default": "mdi:crosshairs-question" },
       "control": { "default": "mdi:shield-lock-outline" },
       "pending_confirm": { "default": "mdi:calendar-question" }
     },

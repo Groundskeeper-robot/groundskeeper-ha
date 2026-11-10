@@ -31,7 +31,7 @@ ACTIVITY = {
 
 def activity_from(data: dict[str, Any]) -> LawnMowerActivity | None:
     """Home Assistant's activity for the panel's summary; None when the panel cannot say yet."""
-    if data.get("state") == "error" or data.get("error_code"):
+    if data.get("state") == "error" or data.get("error_code") or data.get("stalled"):
         return LawnMowerActivity.ERROR
     return ACTIVITY.get(data.get("activity") or "")
 
@@ -63,4 +63,5 @@ class GroundskeeperMower(GroundskeeperEntity, LawnMowerEntity):
             "held": held.get("title"),
             "plan_error": d.get("plan_error"),
             "error_code": d.get("error_code") or None,
+            "stalled_s": d.get("stalled_s") or None,
         }
