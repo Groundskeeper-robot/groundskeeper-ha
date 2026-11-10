@@ -1,0 +1,89 @@
+{
+  "activity": "transit",
+  "api": 1,
+  "battery": 46,
+  "build": null,
+  "can_start": {
+    "plan_id": 1,
+    "plan_name": "Mow All",
+    "reason": "Route to the robot: no route to the robot; Not already running: a run is in progress; Yard clear (Frigate): Frigate not set up; Phone app not driving it: unknown (no link to the robot); Someone home (Alarmo): unknown (Home Assistant not connected)",
+    "why": [
+      {
+        "code": "control_off",
+        "fix": "Switch it on in Settings \u2192 Safety",
+        "title": "Control is switched off"
+      },
+      {
+        "code": "no_route",
+        "fix": "Check the robot's local broker in Settings \u2192 Robot, or sign in to the Yarbo cloud there as a fallback",
+        "title": "The panel cannot reach the robot"
+      },
+      {
+        "code": "running",
+        "fix": "Wait for it to finish, or stop it",
+        "title": "A run is already going"
+      },
+      {
+        "code": "yard",
+        "fix": "Wait until the yard is clear; check Frigate if the cameras are down",
+        "title": "Someone (or an animal) is in the yard, or the cameras cannot tell"
+      },
+      {
+        "code": "phone_app",
+        "fix": "Close the robot's screen in the Yarbo app. If the panel cannot tell, sign in to the Yarbo cloud (it shows the app's keep-awake) or start from the panel yourself",
+        "title": "The Yarbo app is driving it, or the panel cannot tell"
+      },
+      {
+        "code": "presence",
+        "fix": "Starts need someone home; check Home Assistant if it is down",
+        "title": "Nobody is home, or Home Assistant cannot tell"
+      }
+    ],
+    "would_send": false
+  },
+  "charging": 0,
+  "cloud": "signed out",
+  "control_enabled": false,
+  "error_code": 0,
+  "head": "Mower Pro",
+  "held": null,
+  "last_run": {
+    "distance_m": 1920.2,
+    "end_reason": null,
+    "ended": null,
+    "id": 4,
+    "rtk_fixed_pct": 100.0,
+    "started": 1794277617.3951156
+  },
+  "lawn": {
+    "dry_by": null,
+    "state": "Dry"
+  },
+  "local_link": true,
+  "next_window": {
+    "active": false,
+    "auto_start": false,
+    "id": "1572784e",
+    "name": "Weekday mornings",
+    "next": 1794409200.0,
+    "plan_id": 1,
+    "plan_name": "Mow All"
+  },
+  "pause_reason": null,
+  "pending_confirm": false,
+  "plan_error": null,
+  "rtk": {
+    "label": "RTK fixed",
+    "sats": 23
+  },
+  "run": {
+    "distance_m": 2094.3,
+    "id": 4,
+    "started": 1794277617.3951156
+  },
+  "running": true,
+  "sn": "YB0000DEMO0001",
+  "snapshot_age_s": 0.3,
+  "state": "between areas",
+  "version": "0.19.5"
+}

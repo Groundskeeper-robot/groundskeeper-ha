@@ -1,0 +1,64 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect to your Groundskeeper panel",
+        "description": "Home Assistant talks to the panel, never to the robot. Make an API token in the panel under Settings → Access, then paste it here. This version only reads: it sends nothing to the robot.",
+        "data": {
+          "url": "Panel address",
+          "api_token": "API token",
+          "verify_ssl": "Verify the HTTPS certificate"
+        },
+        "data_description": {
+          "url": "Where you open the panel, for example http://192.0.2.20:8425. In Docker, use the IP address rather than a .local name.",
+          "api_token": "Starts with gk_. The panel shows it once, when you make it.",
+          "verify_ssl": "Only matters for an https address. Turn it off for a self-signed certificate."
+        }
+      },
+      "reauth_confirm": {
+        "title": "New API token",
+        "description": "The panel at {url} refused the saved token. Make a new one in the panel under Settings → Access and paste it here.",
+        "data": {
+          "api_token": "API token"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "No answer from the panel. Check the address and port, and that Home Assistant can reach that machine.",
+      "invalid_auth": "The panel refused this token. Make a new one in the panel under Settings → Access.",
+      "invalid_url": "Enter the address you open the panel at, like http://192.0.2.20:8425.",
+      "panel_too_old": "This panel has no Home Assistant summary yet. Update Groundskeeper to the latest release.",
+      "unsupported_api": "This panel is newer than the integration. Update the Groundskeeper integration in HACS.",
+      "no_robot": "The panel hasn't heard from the robot yet. Check the robot connection in the panel, then try again.",
+      "unknown": "Something unexpected went wrong. The Home Assistant log has the details."
+    },
+    "abort": {
+      "already_configured": "This robot is already set up. Its address and token were updated.",
+      "reauth_successful": "The new token works.",
+      "wrong_robot": "That token belongs to a panel for a different robot."
+    }
+  },
+  "entity": {
+    "binary_sensor": {
+      "running": { "name": "Run in progress" },
+      "robot_online": { "name": "Robot online" },
+      "can_start": { "name": "Can start" },
+      "local_link": { "name": "Local link" },
+      "control": { "name": "Control" },
+      "pending_confirm": { "name": "Start waiting for confirmation" },
+      "cloud_sign_in": { "name": "Cloud needs sign-in" }
+    },
+    "sensor": {
+      "state": { "name": "State" },
+      "positioning": { "name": "Positioning" },
+      "satellites": { "name": "Satellites" },
+      "lawn": { "name": "Lawn" },
+      "head": { "name": "Head" },
+      "run_distance": { "name": "Run distance" },
+      "last_run": { "name": "Last run" },
+      "next_window": { "name": "Next window" },
+      "start_check": { "name": "Start check" },
+      "cloud": { "name": "Cloud connection" }
+    }
+  }
+}

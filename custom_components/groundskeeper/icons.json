@@ -1,0 +1,21 @@
+{
+  "entity": {
+    "binary_sensor": {
+      "can_start": { "default": "mdi:play-circle-outline" },
+      "control": { "default": "mdi:shield-lock-outline" },
+      "pending_confirm": { "default": "mdi:calendar-question" }
+    },
+    "sensor": {
+      "state": { "default": "mdi:robot-mower" },
+      "positioning": { "default": "mdi:crosshairs-gps" },
+      "satellites": { "default": "mdi:satellite-variant" },
+      "lawn": { "default": "mdi:grass" },
+      "head": { "default": "mdi:puzzle-outline" },
+      "run_distance": { "default": "mdi:map-marker-distance" },
+      "last_run": { "default": "mdi:history" },
+      "next_window": { "default": "mdi:calendar-clock" },
+      "start_check": { "default": "mdi:clipboard-check-outline" },
+      "cloud": { "default": "mdi:cloud-outline" }
+    }
+  }
+}

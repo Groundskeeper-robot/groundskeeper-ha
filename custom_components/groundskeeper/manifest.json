@@ -1,0 +1,12 @@
+{
+  "domain": "groundskeeper",
+  "name": "Groundskeeper",
+  "codeowners": ["@jpittelkow"],
+  "config_flow": true,
+  "documentation": "https://github.com/Groundskeeper-robot/groundskeeper-ha",
+  "integration_type": "device",
+  "iot_class": "local_polling",
+  "issue_tracker": "https://github.com/Groundskeeper-robot/groundskeeper-ha/issues",
+  "requirements": [],
+  "version": "0.1.0"
+}
