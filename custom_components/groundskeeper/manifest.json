@@ -1,6 +1,7 @@
 {
   "domain": "groundskeeper",
   "name": "Groundskeeper",
+  "categories": ["garden_plants"],
   "codeowners": ["@jpittelkow"],
   "config_flow": true,
   "documentation": "https://github.com/Groundskeeper-robot/groundskeeper-ha",
