@@ -1,0 +1,67 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+# CodeRabbit for groundskeeper-ha. It reviews each PR when it is opened or marked ready, and again on each push;
+# drafts wait. Ask again with `@coderabbitai review` (or `@coderabbitai full review`).
+# Its comments are advice; AGENTS.md (here and the panel's) is the authority.
+language: "en-US"
+tone_instructions: >-
+  Be brief. Only the changes in this PR. No style nits. Rank privacy and robot-safety problems first; quote the
+  AGENTS.md rule a finding breaks.
+
+reviews:
+  profile: "assertive"
+  request_changes_workflow: false   # a maintainer requests changes, not the bot
+  high_level_summary: true
+  poem: false
+  review_status: true
+  collapse_walkthrough: true
+  sequence_diagrams: false
+  auto_review:
+    enabled: true
+    auto_incremental_review: true   # again on each push
+    auto_pause_after_reviewed_commits: 0   # never pause: the default stops after 5 reviewed commits
+    drafts: false                   # a draft waits until it is marked ready for review
+    # If it gets noisy, review only PRs a maintainer tags:
+    # labels: ["coderabbit"]
+  path_filters:
+    - "!**/*.png"
+    - "!.github/social-preview.*"
+  path_instructions:
+    - path: "**"
+      instructions: |
+        AGENTS.md here, and the panel repository's AGENTS.md
+        (https://github.com/Groundskeeper-robot/groundskeeper/blob/main/AGENTS.md), are mandatory policy, not style
+        advice. Flag a change that breaks one even when the code works, and name the rule. In particular:
+        - Read-only: no entity, service or button may send anything to the robot. Commands come later, only through
+          the panel's POST /api/control/send behind the panel's own switch and checks; flag any other way.
+        - No private data in Home Assistant: the robot's serial (use robot_id()), coordinates, the API token or the
+          panel's address must not reach entity ids, unique ids, names, attributes, logs or diagnostics.
+        - Tests are synthetic: fixtures come from the panel's demo mode; flag real dates, times, readings, serials,
+          IP addresses (examples use 192.0.2.x) or coordinates in code, tests, docs or commits.
+        - The summary is versioned (api): read every field defensively; a missing one is unknown, never a crash.
+        - One change per PR; a CHANGELOG.md line under Unreleased for anything a user would notice; new lines at
+          120 characters or fewer.
+        Do not comment on code that was only moved or re-indented.
+    - path: "custom_components/groundskeeper/diagnostics.py"
+      instructions: |
+        Everything private must be redacted: the token, the panel's address, the serial, coordinates. Flag a new
+        field that is not.
+    - path: "custom_components/groundskeeper/manifest.json"
+      instructions: |
+        Flag a new requirement without a reason, or a version change outside a release.
+    - path: "tests/**"
+      instructions: |
+        Offline and synthetic. Flag a test that reaches the network or a fixture that is not from the demo.
+  tools:
+    ruff:
+      enabled: false
+    markdownlint:
+      enabled: false
+    languagetool:
+      enabled: false
+    gitleaks:
+      enabled: true
+    actionlint:
+      enabled: true
+
+chat:
+  auto_reply: true
