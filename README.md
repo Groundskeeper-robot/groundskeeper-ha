@@ -82,8 +82,8 @@ python -m pytest -q
 Never point tests or a development Home Assistant at a panel connected to a real robot. The panel's own repository
 has the safety rules: [AGENTS.md](https://github.com/Groundskeeper-robot/groundskeeper/blob/main/AGENTS.md).
 
-A maintainer may ask [CodeRabbit](https://coderabbit.ai) for an automated review of a pull request
-(`@coderabbitai review`; set up in `.coderabbit.yaml`). Its comments are suggestions: fix what is right, reply where it
+[CodeRabbit](https://coderabbit.ai) reviews each pull request once it is ready for review, and again on each push
+(`.coderabbit.yaml`; drafts wait). Its comments are suggestions: fix what is right, reply where it
 is wrong, and the maintainer decides.
 
 ## License
