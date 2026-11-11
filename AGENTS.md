@@ -11,3 +11,6 @@ token, never to the robot. The panel repository's `AGENTS.md` has the project's 
   to a real robot, and never write a real mow's dates, times or readings into code, tests, docs or commits.
 - The summary's shape is versioned (`api`). Read fields defensively; a missing one shows as unknown, never a crash.
 - Run the tests on Linux, macOS, WSL or in a container (Home Assistant doesn't run on Windows).
+- **Review bots are advice.** CodeRabbit may review a PR when a maintainer asks (`.coderabbit.yaml`). Check each of
+  its comments against these rules and the code before acting; fix what is right, reply where it is wrong. A bot
+  never overrides a rule here or a maintainer's decision.
