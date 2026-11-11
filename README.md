@@ -19,13 +19,21 @@ Independent community project, not affiliated with Yarbo.
 
 ## Install
 
-1. In HACS, open the menu → **Custom repositories**, add `https://github.com/Groundskeeper-robot/groundskeeper-ha`
-   with the type **Integration**, then download **Groundskeeper**.
+[![Open this repository in the Home Assistant Marketplace.](https://my.home-assistant.io/badges/marketplace_repository.svg)](https://my.home-assistant.io/redirect/marketplace_repository/?owner=Groundskeeper-robot&repository=groundskeeper-ha&category=integration)
+
+1. **Download it.** The button above opens this repository in your Home Assistant: in the **Marketplace** from
+   Home Assistant 2026.11, in **HACS** before that. Choose **Download**. Without the button: Marketplace (or HACS) →
+   menu → **Custom repositories**, add `https://github.com/Groundskeeper-robot/groundskeeper-ha` with the type
+   **Integration**, then download **Groundskeeper**.
 2. Restart Home Assistant.
 3. In the panel, go to **Settings → Access** and make an API token named "Home Assistant". It is shown once: copy it.
    An API token can read the panel and ask for robot commands; it can't change settings or switch control on.
-4. In Home Assistant, go to **Settings → Devices & services → Add integration → Groundskeeper**. Enter the address you
-   open the panel at (for example `http://192.0.2.20:8425`) and the token.
+4. **Add the integration.**
+
+   [![Add the Groundskeeper integration to your Home Assistant.](https://my.home-assistant.io/badges/config_flow_start.svg)](https://my.home-assistant.io/redirect/config_flow_start/?domain=groundskeeper)
+
+   Or **Settings → Devices & services → Add integration → Groundskeeper**. Enter the address you open the panel at
+   (for example `http://192.0.2.20:8425`) and the token.
 
 In Docker, use the panel's IP address: `.local` names often don't resolve inside a container.
 
@@ -48,6 +56,11 @@ sent.
 
 **Unavailable** means Home Assistant can't reach the panel, or the panel has had no robot data for 2 minutes. The
 values that come from the robot (battery, positioning, the mower) then show unavailable rather than a stale reading.
+
+The Groundskeeper icon ships inside the integration (`brand/`, Home Assistant 2026.3 and later), so it shows in
+**Devices & services** and the **Add integration** list once the download is in place and Home Assistant has restarted.
+The HACS store page before 2026.11 doesn't read icons shipped this way and says the icon isn't available; that's
+HACS, not a missing file.
 
 ## Privacy
 
