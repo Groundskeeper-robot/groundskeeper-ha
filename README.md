@@ -13,7 +13,8 @@ Independent community project, not affiliated with Yarbo.
 
 ## What you need
 
-- A Groundskeeper panel, version **0.19.6 or later** (it has the Home Assistant summary, `GET /api/ha/summary`).
+- A Groundskeeper panel, version **0.20.0 or later** (it has the Home Assistant summary, `GET /api/ha/summary`, and reaches the robot
+  through the Yarbo cloud).
 - Home Assistant 2026.3 or later, with HACS.
 - Home Assistant must be able to reach the panel's address on your network.
 
@@ -48,7 +49,7 @@ One device, **Groundskeeper**, updated every 30 seconds.
 | Last run, Next window | When the last run ended, with its result, and when the next schedule window opens, with its plan |
 | Start check | `Ready` when a start of the next plan would go out now, else the panel's first reason why not. All reasons are in its attributes. |
 | Run in progress, Robot online, Needs attention, Lost contact, Can start, Start waiting for confirmation | On/off. Needs attention is the panel's own stuck check; the mower then shows Error. |
-| Diagnostic: Head, Local link, Control, Waiting for RTK fix, Cloud needs sign-in | How the panel is connected and set up |
+| Diagnostic: Head, Robot link, Control, Waiting for RTK fix, Cloud needs sign-in | How the panel is connected and set up |
 | Off by default: Satellites, Run distance, Cloud connection | Turn on what you want to chart |
 
 The start check runs the panel's checks as a program, not a person: anything unknown counts as a fail. Nothing is
