@@ -438,8 +438,11 @@ class GroundskeeperCard extends HTMLElement {
   }
 
   _updateLiveNote() {
-    if (!this._liveEl) return;
     const off = this._connected === false;
+    if (!this._liveEl) {                                  // status chips hidden: say it with the card's notes
+      this._setNote(off ? "Live feed paused: the robot's position may be out of date." : null, "feed");
+      return;
+    }
     this._liveEl.textContent = off ? "Live feed paused" : "";
     this._liveEl.hidden = !off;
   }
@@ -479,6 +482,7 @@ class GroundskeeperCard extends HTMLElement {
       this._liveEl = el("span", { class: "paused", hidden: true });
       for (const [key, icon] of rows) this._statusEl.append(this._chip(key, icon).button);
       this._statusEl.append(this._liveEl);
+      this._clearNote("feed");                            // the chips' own warning takes over
     }
     for (const [key, icon, entity, text] of rows) {
       const { button, label } = this._chip(key, icon);
@@ -653,7 +657,9 @@ class GroundskeeperCard extends HTMLElement {
       return;
     }
     let caption = "";
-    if (name) caption = follow.covered === false ? `${name}: no camera covers the robot` : `${name}: covers the robot`;
+    if (name && follow.covered === true) caption = `${name}: covers the robot`;
+    else if (name && follow.covered === false) caption = `${name}: no camera covers the robot`;
+    else if (name) caption = name;                                        // coverage unknown: just the camera
     if (entity !== this._camEntity) {
       this._camEntity = entity;
       const cfg = { type: "picture-entity", entity, camera_view: "live", show_name: false, show_state: false };
