@@ -70,7 +70,7 @@
       "lost_contact": { "name": "Lost contact" },
       "rtk_wait": { "name": "Waiting for RTK fix" },
       "can_start": { "name": "Can start" },
-      "local_link": { "name": "Local link" },
+      "local_link": { "name": "Robot link" },
       "control": { "name": "Control" },
       "pending_confirm": { "name": "Start waiting for confirmation" },
       "cloud_sign_in": { "name": "Cloud needs sign-in" }
