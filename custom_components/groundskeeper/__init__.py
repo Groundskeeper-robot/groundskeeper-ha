@@ -1,7 +1,8 @@
 """Groundskeeper: your Yarbo in Home Assistant, through your Groundskeeper panel.
 
-It reads only: it sends nothing to the robot. Besides the summary's entities it can follow the robot live for the
-Groundskeeper card (the map and the follow camera, Options), through the panel's live feed.
+It reads, and sends nothing unless the Commands option is on; then the mower and the card ask the panel to start, pause,
+resume, stop or dock, and the panel decides (its Control switch and checks). Besides the summary's entities it can
+follow the robot live for the Groundskeeper card (the map and the follow camera, Options), through the panel's feed.
 """
 
 from __future__ import annotations

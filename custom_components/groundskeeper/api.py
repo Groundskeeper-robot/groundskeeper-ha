@@ -1,7 +1,8 @@
 """A small client for the Groundskeeper panel's Home Assistant API.
 
-It reads only. Home Assistant talks to the panel, never to the robot, and the panel keeps the robot connection, the
-safety checks and the audit log.
+Home Assistant talks to the panel, never to the robot, and the panel keeps the robot connection, the safety checks and
+the audit log. It reads, and with the Commands option asks the panel to send one of five run commands (COMMANDS):
+the panel decides, with its Control switch and its checks.
 """
 
 from __future__ import annotations
@@ -16,11 +17,15 @@ from urllib.parse import quote, urlsplit
 import aiohttp
 
 from .const import (
+    COMMANDS,
+    CONTROL_PREVIEW_PATH,
+    CONTROL_SEND_PATH,
     IMAGERY_PATH,
     LIVE_API,
     LIVE_PATH,
     LIVE_READ_TIMEOUT_S,
     MAP_PATH,
+    PLANS_PATH,
     REQUEST_TIMEOUT_S,
     SUMMARY_API,
     SUMMARY_PATH,
@@ -45,6 +50,25 @@ class PanelTooOld(GroundskeeperError):
 
 class UnsupportedApi(GroundskeeperError):
     """The panel speaks a newer summary than this integration knows."""
+
+
+class CommandRejected(GroundskeeperError):
+    """The panel turned the request down before its checks (a 400: a missing plan, say)."""
+
+
+# What the integration passes on from the panel's answer to a preview or a send: the verdict and why, not the payload.
+COMMAND_KEYS = ("cmd", "enabled", "would_send", "sent", "reason", "refused", "error", "checks", "why", "confirm")
+
+
+def command_body(cmd: str, plan_id: int | None) -> dict[str, Any]:
+    """The request for one of COMMANDS; start_plan needs a plan. Raises ValueError for anything else."""
+    if cmd not in COMMANDS:
+        raise ValueError(f"{cmd} is not a command Home Assistant may ask for")
+    if cmd == "start_plan":
+        if not isinstance(plan_id, int) or isinstance(plan_id, bool) or plan_id < 0:
+            raise ValueError("start_plan needs a plan")
+        return {"cmd": cmd, "args": {"plan_id": plan_id}}
+    return {"cmd": cmd, "args": {}}
 
 
 def normalize_url(url: str) -> str:
@@ -110,6 +134,49 @@ class GroundskeeperClient:
                 return await resp.json(content_type=None)
         except (aiohttp.ClientError, TimeoutError, ValueError) as err:
             raise CannotConnect(str(err) or type(err).__name__) from err
+
+    async def _post_json(self, path: str, body: dict[str, Any]) -> dict[str, Any]:
+        try:
+            async with self._session.post(
+                f"{self.url}{path}",
+                json=body,
+                headers=self._headers,
+                timeout=aiohttp.ClientTimeout(total=REQUEST_TIMEOUT_S),
+                allow_redirects=False,
+            ) as resp:
+                if resp.status in (401, 403):
+                    raise InvalidAuth
+                if resp.status == 404:
+                    raise PanelTooOld
+                if resp.status == 400:
+                    detail = (await resp.json(content_type=None) or {}).get("detail")
+                    raise CommandRejected(str(detail or "the panel turned the request down"))
+                resp.raise_for_status()
+                data = await resp.json(content_type=None)
+        except (aiohttp.ClientError, TimeoutError, ValueError, AttributeError) as err:
+            raise CannotConnect(str(err) or type(err).__name__) from err
+        if not isinstance(data, dict):
+            raise CannotConnect("the panel's answer is not a JSON object")
+        return {k: data[k] for k in COMMAND_KEYS if k in data}
+
+    async def plans(self) -> list[dict[str, Any]]:
+        """The robot's plans as the panel last read them, as {id, name}."""
+        data = await self._get_json(PLANS_PATH)
+        plans = data.get("plans") if isinstance(data, dict) else None
+        return [
+            {"id": p["id"], "name": str(p.get("name") or f"Plan {p['id']}")}
+            for p in plans or []
+            if isinstance(p, dict) and isinstance(p.get("id"), int) and not isinstance(p.get("id"), bool)
+        ]
+
+    async def preview(self, cmd: str, plan_id: int | None = None) -> dict[str, Any]:
+        """Would the panel send this now, and why not: its checks, without sending anything."""
+        return await self._post_json(CONTROL_PREVIEW_PATH, command_body(cmd, plan_id))
+
+    async def send(self, cmd: str, plan_id: int | None = None) -> dict[str, Any]:
+        """Ask the panel to send one of COMMANDS. It sends only with its Control switch on and every check passing;
+        `sent` says whether it went. Never an override: the panel gives a token none anyway."""
+        return await self._post_json(CONTROL_SEND_PATH, {**command_body(cmd, plan_id), "confirm": True})
 
     async def map(self) -> dict[str, Any]:
         """The yard map for the card: GeoJSON, its bounds and the yard photo's details. A panel that has not read

@@ -31,8 +31,10 @@ reviews:
         AGENTS.md here, and the panel repository's AGENTS.md
         (https://github.com/Groundskeeper-robot/groundskeeper/blob/main/AGENTS.md), are mandatory policy, not style
         advice. Flag a change that breaks one even when the code works, and name the rule. In particular:
-        - Read-only: no entity, service or button may send anything to the robot. Commands come later, only through
-          the panel's POST /api/control/send behind the panel's own switch and checks; flag any other way.
+        - Commands only through the panel, only with the Commands option on (off by default): the five run commands
+          in const.COMMANDS through POST /api/control/send with confirm true and no override. Flag any other command
+          (cameras, keep-awake, cmd_vel), any settings write, any other route to the robot, Commands on by default,
+          and GET /api/plans with fresh=true (it asks the robot).
         - No private data in Home Assistant: the robot's serial (use robot_id()), coordinates, the API token or the
           panel's address must not reach entity ids, unique ids, names, attributes, logs or diagnostics. The one
           exception is the opt-in Position device tracker (device_tracker.py), off by default, which AGENTS.md

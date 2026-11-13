@@ -36,7 +36,18 @@ CARD_URL = "/groundskeeper_card/groundskeeper-card.js"
 CONF_MAP = "map"
 CONF_FOLLOW_CAMERA = "follow_camera"
 CONF_DEVICE_TRACKER = "device_tracker"
-DEFAULT_OPTIONS = {CONF_MAP: True, CONF_FOLLOW_CAMERA: True, CONF_DEVICE_TRACKER: False}
+CONF_COMMANDS = "commands"
+DEFAULT_OPTIONS = {CONF_MAP: True, CONF_FOLLOW_CAMERA: True, CONF_DEVICE_TRACKER: False, CONF_COMMANDS: False}
+
+# Commands (the Commands option, off by default). They go only through the panel's POST /api/control/send, which
+# sends them only with its Control switch on and every check passing, under the strict rules it keeps for an API token
+# (unknown counts as a fail, no override). These five and nothing else: never the cameras or keep-awake, never manual
+# drive. A preview asks the same checks without sending. The plan list is the panel's copy (never `fresh`, which
+# would ask the robot).
+COMMANDS = ("start_plan", "pause", "resume", "stop", "cmd_recharge")
+PLANS_PATH = "/api/plans"
+CONTROL_PREVIEW_PATH = "/api/control/preview"
+CONTROL_SEND_PATH = "/api/control/send"
 
 # Live updates for entities and websocket subscribers: async_dispatcher_send(hass, SIGNAL_LIVE.format(entry_id)).
 SIGNAL_LIVE = f"{DOMAIN}_live_{{}}"

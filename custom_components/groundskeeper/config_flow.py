@@ -20,7 +20,7 @@ from .api import (
     UnsupportedApi,
     normalize_url,
 )
-from .const import CONF_DEVICE_TRACKER, CONF_FOLLOW_CAMERA, CONF_MAP, DOMAIN, LOGGER
+from .const import CONF_COMMANDS, CONF_DEVICE_TRACKER, CONF_FOLLOW_CAMERA, CONF_MAP, DOMAIN, LOGGER
 from .coordinator import options
 
 USER_SCHEMA = vol.Schema(
@@ -120,7 +120,8 @@ class GroundskeeperConfigFlow(ConfigFlow, domain=DOMAIN):
 
 
 class GroundskeeperOptionsFlow(OptionsFlow):
-    """What the integration follows live: the map and follow camera for the card, and the optional device tracker."""
+    """What the integration follows live (the map and follow camera for the card, the optional device tracker) and
+    whether it may ask the panel for commands."""
 
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         if user_input is not None:
@@ -131,6 +132,7 @@ class GroundskeeperOptionsFlow(OptionsFlow):
                 vol.Required(CONF_MAP, default=current[CONF_MAP]): bool,
                 vol.Required(CONF_FOLLOW_CAMERA, default=current[CONF_FOLLOW_CAMERA]): bool,
                 vol.Required(CONF_DEVICE_TRACKER, default=current[CONF_DEVICE_TRACKER]): bool,
+                vol.Required(CONF_COMMANDS, default=current[CONF_COMMANDS]): bool,
             }
         )
         return self.async_show_form(step_id="init", data_schema=schema)

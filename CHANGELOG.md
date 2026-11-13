@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### Added
+- **Commands**, off until switched on in the options: the mower entity's Start (resume when paused, else the plan
+  the panel's start check names), Pause and Dock, and websocket commands for the card (`groundskeeper/plans`,
+  `groundskeeper/preview`, `groundskeeper/command`). Each asks the panel's `POST /api/control/send`, which sends only
+  with its Control switch on and every check passing; a refusal shows the panel's reason. Only start plan, pause,
+  resume, stop and dock.
+- **Controls on the card** (`show_controls`, with Commands on): Start (pick a plan, see the panel's checks, start
+  only when it would), Pause, Stop and Dock at once, Resume on a second tap; which show follows the mower's state.
+- The card shows a live preview in the dashboard's card picker, and the README has a screenshot of it.
+
 ### Changed
 - README: one-click buttons to open the repository in the Marketplace (HACS before Home Assistant 2026.11) and
   to add the integration.

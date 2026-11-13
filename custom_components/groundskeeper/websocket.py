@@ -12,6 +12,12 @@ own sign-in decides who sees the map. What these commands send is never written 
   whether the feed is connected), then each `state`, `pose`, `connection` and `stale` event as it comes. A `closed`
   event ends it: the entry unloaded or reloaded (an option changed), and the card subscribes again if it wants.
   Without the Map option the robot's position is left out of everything sent.
+- `groundskeeper/plans` {entry_id}: the robot's plans ({id, name}) for the card's Start. Commands option.
+- `groundskeeper/preview` {entry_id, cmd, plan_id?}: would the panel send this now: its checks and why not, nothing
+  sent. Commands option.
+- `groundskeeper/command` {entry_id, cmd, plan_id?}: ask the panel to send one of COMMANDS (start_plan needs a
+  plan). Its answer: `sent`, and when not, `refused` and `why`. Commands option. The panel decides: its Control
+  switch and every check, held to the strict rules it keeps for an API token, with no override.
 """
 
 from __future__ import annotations
@@ -25,8 +31,9 @@ from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 
+from . import commands
 from .api import IMAGERY_NAME, GroundskeeperError
-from .const import CONF_MAP, DOMAIN
+from .const import COMMANDS, CONF_MAP, DOMAIN
 from .coordinator import GroundskeeperCoordinator, options
 
 
@@ -35,6 +42,9 @@ def async_register(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_map)
     websocket_api.async_register_command(hass, ws_subscribe)
     websocket_api.async_register_command(hass, ws_track)
+    websocket_api.async_register_command(hass, ws_plans)
+    websocket_api.async_register_command(hass, ws_preview)
+    websocket_api.async_register_command(hass, ws_command)
 
 
 def _coordinator(hass: HomeAssistant, connection, msg: dict) -> GroundskeeperCoordinator | None:
@@ -149,3 +159,68 @@ def ws_subscribe(hass: HomeAssistant, connection: websocket_api.ActiveConnection
         "connected": live.connected,
     }
     connection.send_message(websocket_api.event_message(msg["id"], {"event": "snapshot", "data": snapshot}))
+
+
+COMMAND_SCHEMA = {
+    vol.Required("entry_id"): str,
+    vol.Required("cmd"): vol.In(COMMANDS),
+    vol.Optional("plan_id"): vol.All(int, vol.Range(min=0)),
+}
+
+
+def _commands_coordinator(hass: HomeAssistant, connection, msg: dict) -> GroundskeeperCoordinator | None:
+    coordinator = _coordinator(hass, connection, msg)
+    if coordinator is None:
+        return None
+    if not commands.commands_on(coordinator):
+        connection.send_error(msg["id"], "commands_off", "Commands are switched off in the integration's options")
+        return None
+    if msg.get("cmd") == "start_plan" and msg.get("plan_id") is None:
+        connection.send_error(msg["id"], websocket_api.ERR_INVALID_FORMAT, "start_plan needs a plan_id")
+        return None
+    return coordinator
+
+
+@websocket_api.websocket_command({vol.Required("type"): "groundskeeper/plans", vol.Required("entry_id"): str})
+@websocket_api.async_response
+async def ws_plans(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]) -> None:
+    coordinator = _commands_coordinator(hass, connection, msg)
+    if coordinator is None:
+        return
+    try:
+        plans = await coordinator.client.plans()
+    except GroundskeeperError as err:
+        connection.send_error(
+            msg["id"], "panel_unavailable", f"The panel did not give its plans ({type(err).__name__})"
+        )
+        return
+    default = (coordinator.data or {}).get("can_start") or {}
+    connection.send_result(msg["id"], {"plans": plans, "default": default.get("plan_id")})
+
+
+@websocket_api.websocket_command({vol.Required("type"): "groundskeeper/preview", **COMMAND_SCHEMA})
+@websocket_api.async_response
+async def ws_preview(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]) -> None:
+    coordinator = _commands_coordinator(hass, connection, msg)
+    if coordinator is None:
+        return
+    try:
+        result = await commands.preview(coordinator, msg["cmd"], msg.get("plan_id"))
+    except GroundskeeperError as err:
+        connection.send_error(msg["id"], "panel_unavailable", f"The panel could not be asked ({type(err).__name__})")
+        return
+    connection.send_result(msg["id"], result)
+
+
+@websocket_api.websocket_command({vol.Required("type"): "groundskeeper/command", **COMMAND_SCHEMA})
+@websocket_api.async_response
+async def ws_command(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]) -> None:
+    coordinator = _commands_coordinator(hass, connection, msg)
+    if coordinator is None:
+        return
+    try:
+        result = await commands.send(coordinator, msg["cmd"], msg.get("plan_id"))
+    except GroundskeeperError as err:
+        connection.send_error(msg["id"], "panel_unavailable", f"The panel could not be asked ({type(err).__name__})")
+        return
+    connection.send_result(msg["id"], {**result, "why_not": None if result.get("sent") else commands.why_not(result)})
