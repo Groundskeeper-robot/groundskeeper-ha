@@ -480,3 +480,19 @@ async def test_a_quiet_feed_reaches_the_card(hass, aioclient_mock, entry, hass_w
     ws = await _subscribed(hass, entry, hass_ws_client)
     async_dispatcher_send(hass, entry.runtime_data.live.signal, "stale", None)
     assert (await ws.receive_json())["event"] == {"event": "stale", "data": None}
+
+
+async def test_no_track_if_the_map_is_switched_off_while_it_loads(hass, aioclient_mock, entry, hass_ws_client):
+    await set_up(hass, entry, aioclient_mock)
+    client = entry.runtime_data.client
+
+    async def slow_track(run_id, since=0):
+        hass.config_entries.async_update_entry(entry, options={CONF_MAP: False})
+        return [[1.0, POSE["lon"], POSE["lat"], 4]]
+
+    client.run_track = slow_track
+    ws = await hass_ws_client(hass)
+    await ws.send_json({"id": 1, "type": "groundskeeper/track", "entry_id": entry.entry_id, "run_id": 12})
+    msg = await ws.receive_json()
+    assert not msg["success"] and msg["error"]["code"] == "map_off"
+    await hass.async_block_till_done()

@@ -106,6 +106,9 @@ async def ws_track(hass: HomeAssistant, connection: websocket_api.ActiveConnecti
             msg["id"], "panel_unavailable", f"The panel did not give the track ({type(err).__name__})"
         )
         return
+    if not options(coordinator.config_entry)[CONF_MAP]:  # switched off while the panel answered
+        connection.send_error(msg["id"], "map_off", "The map is switched off in the integration's options")
+        return
     connection.send_result(msg["id"], {"run_id": msg["run_id"], "points": points})
 
 

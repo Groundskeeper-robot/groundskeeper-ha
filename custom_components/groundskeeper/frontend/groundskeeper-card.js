@@ -27,8 +27,8 @@ const ROBOT_PX = 14;
 const RETRY_MS = 10000;                                  // a failed subscribe, or a map the panel has not read yet
 const RETRY_OFF_MS = 60000;                              // the map and camera switched off in the options
 const WATCHDOG_MS = 30000;                               // nothing on the feed for this long: subscribe again
-const TRACK_EVERY_MS = 10000;
-const RESIGN_MS = 20 * 3600 * 1000;                      // the photo's signed address lasts 24 h: renew before                            // the current run's new points, at most this often
+const TRACK_EVERY_MS = 10000;                            // the current run's new points, at most this often
+const RESIGN_MS = 20 * 3600 * 1000;                      // the photo's signed address lasts 24 h: renew before
 
 const DEFAULTS = { show_status: true, show_map: true, show_camera: true, camera: "auto", map_height: 320 };
 
@@ -308,8 +308,8 @@ class GroundskeeperCard extends HTMLElement {
 
   _onState(s) {
     this._live = s;
-    if (s.position === null) this._pose = null;          // no fix now: the last pose is not where it is
-    else if (s.position && (!this._pose || (s.position.t || 0) >= (this._pose.t || 0))) this._pose = s.position;
+    if (!s.position) this._pose = null;                  // no fix (or no map): the last pose is not where it is
+    else if (!this._pose || (s.position.t || 0) >= (this._pose.t || 0)) this._pose = s.position;
     if (this._config.show_map && !this._mapOff) {
       // Not read yet, or the last try failed: ask again, at most every RETRY_MS.
       if (!this._map && !this._loadingMap && Date.now() - this._mapTried >= RETRY_MS) this._loadMap();
@@ -318,7 +318,10 @@ class GroundskeeperCard extends HTMLElement {
       else if (s.map !== undefined && this._mapSha !== undefined && s.map !== this._mapSha) this._loadMap();
     }
     const run = s.run ? s.run.id : null;
-    if (run !== this._track.run) this._track = { run, points: [], since: 0, busy: false, at: 0 };
+    if (run !== this._track.run) {                        // a new run, or none: draw what belongs now
+      this._track = { run, points: [], since: 0, busy: false, at: 0 };
+      this._drawTrack();
+    }
     if (run !== null && this._config.show_map && Date.now() - this._track.at >= TRACK_EVERY_MS) this._loadTrack();
     this._drawRobot();
     this._updateCamera();
