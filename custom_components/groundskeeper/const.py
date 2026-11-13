@@ -16,7 +16,8 @@ REQUEST_TIMEOUT_S = 15
 # The panel's own limit for "Robot online": no robot data for this long and the robot counts as offline.
 ROBOT_STALE_S = 120
 
-# The live feed for the map card (GET /api/ha/stream, in the panel release after 0.20.0). Its `api` is versioned like the summary's.
+# The live feed for the map card (GET /api/ha/stream, in the panel release after 0.20.0). Its `api` is versioned
+# like the summary's.
 LIVE_API = 1
 LIVE_PATH = "/api/ha/stream"
 MAP_PATH = "/api/map"

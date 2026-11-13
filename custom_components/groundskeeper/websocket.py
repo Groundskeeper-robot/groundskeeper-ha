@@ -8,8 +8,8 @@ own sign-in decides who sees the map. What these commands send is never written 
   address on this integration's imagery view). Map option.
 - `groundskeeper/subscribe` {entry_id}: the live feed. First a `snapshot` event (the last state, the newest pose,
   whether the feed is connected), then each `state`, `pose`, `connection` and `stale` event as it comes. A `closed`
-  event ends it: the entry unloaded or reloaded (an option changed), and the card subscribes again if it wants. Without the Map
-  option the robot's position is left out of everything sent.
+  event ends it: the entry unloaded or reloaded (an option changed), and the card subscribes again if it wants.
+  Without the Map option the robot's position is left out of everything sent.
 """
 
 from __future__ import annotations

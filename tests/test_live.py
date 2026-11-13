@@ -239,6 +239,21 @@ async def test_nothing_else_passes_through(hass, aioclient_mock, entry, hass_cli
     assert len(aioclient_mock.mock_calls) == calls
 
 
+async def test_only_image_types_pass_through(hass, aioclient_mock, entry, hass_client):
+    await set_up(hass, entry, aioclient_mock)
+    page = b"<script>alert(1)</script>"
+    aioclient_mock.get(f"{URL}/imagery/page.html", content=page, headers={"Content-Type": "text/html"})
+    r = await (await hass_client()).get(f"/api/groundskeeper/{entry.entry_id}/imagery/page.html")
+    assert r.headers["Content-Type"] == "image/jpeg" and r.headers["X-Content-Type-Options"] == "nosniff"
+
+
+async def test_a_missing_coverage_is_unknown(hass, aioclient_mock, entry):
+    await set_up(hass, entry, aioclient_mock)
+    entry.runtime_data.live.handle("state", {**LIVE_STATE, "follow": {"camera": "drive"}})
+    await hass.async_block_till_done()
+    assert hass.states.get(SENSOR).attributes["covered"] is None
+
+
 async def test_imagery_needs_a_signed_in_person(hass, aioclient_mock, entry, hass_client_no_auth):
     await set_up(hass, entry, aioclient_mock)
     client = await hass_client_no_auth()

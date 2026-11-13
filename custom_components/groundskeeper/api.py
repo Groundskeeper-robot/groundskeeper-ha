@@ -133,7 +133,9 @@ class GroundskeeperClient:
             async with self._session.get(
                 f"{self.url}{LIVE_PATH}",
                 headers={**self._headers, "Accept": "text/event-stream"},
-                timeout=aiohttp.ClientTimeout(total=None, sock_connect=REQUEST_TIMEOUT_S, sock_read=LIVE_READ_TIMEOUT_S),
+                timeout=aiohttp.ClientTimeout(
+                    total=None, sock_connect=REQUEST_TIMEOUT_S, sock_read=LIVE_READ_TIMEOUT_S
+                ),
             ) as resp:
                 if resp.status in (401, 403):
                     raise InvalidAuth
@@ -175,7 +177,9 @@ class GroundskeeperClient:
             resp = await self._session.get(
                 f"{self.url}/api/frigate/stream/{quote(camera)}.mjpeg",
                 headers=self._headers,
-                timeout=aiohttp.ClientTimeout(total=None, sock_connect=REQUEST_TIMEOUT_S, sock_read=LIVE_READ_TIMEOUT_S),
+                timeout=aiohttp.ClientTimeout(
+                    total=None, sock_connect=REQUEST_TIMEOUT_S, sock_read=LIVE_READ_TIMEOUT_S
+                ),
             )
         except (aiohttp.ClientError, TimeoutError) as err:
             raise CannotConnect(str(err) or type(err).__name__) from err

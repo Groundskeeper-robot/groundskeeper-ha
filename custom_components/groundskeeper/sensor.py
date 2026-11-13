@@ -201,4 +201,5 @@ class FollowCameraSensor(GroundskeeperLiveEntity, SensorEntity):
 
     @property
     def extra_state_attributes(self) -> Data:
-        return {"covered": bool((self.live_state.get("follow") or {}).get("covered"))}
+        covered = (self.live_state.get("follow") or {}).get("covered")
+        return {"covered": covered if isinstance(covered, bool) else None}  # missing: unknown, not "not covered"

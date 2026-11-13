@@ -23,6 +23,9 @@ from .const import CONF_MAP, DOMAIN
 from .coordinator import options
 
 MAX_ZOOM = 24
+# What a tile or the yard photo may be served as. Anything else the panel says is replaced: a compromised panel (or a
+# cleartext connection someone sits on) must not get an HTML page served from Home Assistant's own address.
+IMAGE_TYPES = ("image/jpeg", "image/png", "image/webp")
 
 
 def photo_name_ok(name: str) -> bool:
@@ -57,7 +60,12 @@ async def _pass(hass: HomeAssistant, entry_id: str, path: str, cache: str) -> we
         return web.Response(status=HTTPStatus.NO_CONTENT)
     if status != HTTPStatus.OK:
         return web.Response(status=HTTPStatus.NOT_FOUND)
-    return web.Response(body=body, content_type=(ctype or "image/jpeg").split(";")[0], headers={"Cache-Control": cache})
+    kind = (ctype or "").split(";")[0].strip().lower()
+    return web.Response(
+        body=body,
+        content_type=kind if kind in IMAGE_TYPES else "image/jpeg",
+        headers={"Cache-Control": cache, "X-Content-Type-Options": "nosniff"},
+    )
 
 
 class TileView(HomeAssistantView):
