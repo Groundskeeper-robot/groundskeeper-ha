@@ -104,9 +104,10 @@ def ws_subscribe(hass: HomeAssistant, connection: websocket_api.ActiveConnection
             if unsub:
                 unsub()
             return
+        if event == "pose" and not options(entry)[CONF_MAP]:
+            return  # the only event held back: positions, with the map switched off
         out = shown(event, data)
-        if out is not None:
-            connection.send_message(websocket_api.event_message(msg["id"], {"event": event, "data": out}))
+        connection.send_message(websocket_api.event_message(msg["id"], {"event": event, "data": out}))
 
     connection.subscriptions[msg["id"]] = async_dispatcher_connect(hass, live.signal, forward)
     connection.send_result(msg["id"])

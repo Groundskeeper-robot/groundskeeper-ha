@@ -348,3 +348,10 @@ async def test_no_position_from_the_panel_clears_the_tracker(hass, aioclient_moc
     await hass.async_block_till_done()
     assert entry.runtime_data.live.position is None
     assert hass.states.get(TRACKER).state == STATE_UNAVAILABLE
+
+
+async def test_a_quiet_feed_reaches_the_card(hass, aioclient_mock, entry, hass_ws_client):
+    await set_up(hass, entry, aioclient_mock)
+    ws = await _subscribed(hass, entry, hass_ws_client)
+    async_dispatcher_send(hass, entry.runtime_data.live.signal, "stale", None)
+    assert (await ws.receive_json())["event"] == {"event": "stale", "data": None}
