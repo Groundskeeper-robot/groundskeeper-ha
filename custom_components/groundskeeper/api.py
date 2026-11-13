@@ -117,6 +117,19 @@ def ground_meta(data: Any) -> dict[str, Any]:
     }
 
 
+def may_keep(cache_control: str | None) -> bool:
+    """Whether the panel's Cache-Control lets a browser keep a ground tile: a max-age above zero, and no no-store or
+    no-cache. Anything else (no header, max-age=0, a must-revalidate policy) is not kept."""
+    directives = {}
+    for part in (cache_control or "").lower().split(","):
+        key, _, value = part.strip().partition("=")
+        directives[key] = value.strip().strip('"')
+    if "no-store" in directives or "no-cache" in directives:
+        return False
+    age = directives.get("max-age", "")
+    return age.isascii() and age.isdigit() and int(age) > 0
+
+
 def normalize_url(url: str) -> str:
     """The panel's address as typed, with a scheme and without a trailing slash. Raises ValueError if unusable."""
     url = (url or "").strip().rstrip("/")
@@ -350,8 +363,7 @@ class GroundskeeperClient:
                 raise ValueError(version)
             path += f"?v={version}"
         status, body, _ctype, cache = await self.file(path, timeout=GROUND_TIMEOUT_S, max_bytes=GROUND_TILE_MAX_BYTES)
-        cache = (cache or "").lower()
-        return status, body, "max-age" in cache and "no-store" not in cache  # kept only when the panel says so
+        return status, body, may_keep(cache)
 
     async def vendor(self, name: str) -> bytes:
         """One of the panel's libraries for the card's 3D view, only with the exact contents VENDOR names. Raises

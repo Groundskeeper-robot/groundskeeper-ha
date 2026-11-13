@@ -231,3 +231,11 @@ async def test_a_tile_number_is_plain_digits(hass, aioclient_mock, entry, hass_c
     calls = len(aioclient_mock.mock_calls)
     r = await (await hass_client()).get(f"/api/groundskeeper/{entry.entry_id}/ground/16/1/{number}.png")
     assert r.status in (400, 404) and len(aioclient_mock.mock_calls) == calls
+
+
+def test_a_tile_is_kept_only_with_a_lifetime():
+    from custom_components.groundskeeper.api import may_keep
+
+    assert may_keep("max-age=86400") and may_keep("public, max-age=60")
+    for cache in (None, "", "no-store", "max-age=0", "no-cache, max-age=86400", "max-age=86400, no-store", "max-age=x"):
+        assert not may_keep(cache), cache
