@@ -9,10 +9,11 @@ attributes, so Home Assistant's recorder keeps no history of it unless the perso
 from __future__ import annotations
 
 import asyncio
-import time
+from uuid import uuid4
 from typing import Any
 
-from homeassistant.core import HomeAssistant, callback
+from homeassistant.core import CALLBACK_TYPE, HomeAssistant, callback
+from homeassistant.helpers.event import async_call_later
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 
 from .api import GroundskeeperClient, InvalidAuth, PanelTooOld, UnsupportedApi
@@ -24,21 +25,26 @@ class GroundskeeperLive:
 
     def __init__(self, hass: HomeAssistant, entry_id: str, client: GroundskeeperClient) -> None:
         self.hass = hass
-        self.signal = SIGNAL_LIVE.format(entry_id)
+        # One signal per load: after a reload (an option changed) nothing still listening to the old one hears the
+        # new feed. stop() sends `closed` on it first, so the card's subscriptions end and it can ask again.
+        self.signal = SIGNAL_LIVE.format(f"{entry_id}_{uuid4().hex}")
         self.client = client
         self.state: dict[str, Any] | None = None  # the last `state` event (ha.live on the panel)
-        self.state_at: float | None = None  # when it came (monotonic)
+        self.stale = False  # no state event for LIVE_STALE_S (set by a timer, cleared by the next state)
         self.pose: dict[str, Any] | None = None  # the newest pose sample
         self.connected = False
         self.error: str | None = None
         self._task: asyncio.Task | None = None
         self._logged: str | None = None  # the last "not available" reason logged, so it is said once
+        self._stale_unsub: CALLBACK_TYPE | None = None  # the nudge that marks live entities stale
 
     @callback
     def start(self, entry) -> None:
         self._task = entry.async_create_background_task(self.hass, self._run(), f"groundskeeper live {entry.entry_id}")
 
     async def stop(self) -> None:
+        self._cancel_stale()
+        async_dispatcher_send(self.hass, self.signal, "closed", None)
         if self._task:
             self._task.cancel()
             try:
@@ -49,8 +55,9 @@ class GroundskeeperLive:
 
     @property
     def fresh(self) -> bool:
-        """A state event came within LIVE_STALE_S: a short reconnect does not make the entities flicker."""
-        return self.state is not None and self.state_at is not None and time.monotonic() - self.state_at < LIVE_STALE_S
+        """A state event came within LIVE_STALE_S (a timer says when it has not): a short reconnect does not make the
+        entities flicker, and a dead feed makes them unavailable on time."""
+        return self.state is not None and not self.stale
 
     @property
     def position(self) -> dict[str, Any] | None:
@@ -65,7 +72,9 @@ class GroundskeeperLive:
     def handle(self, event: str, data: Any) -> None:
         """One event from the panel: keep it and pass it on."""
         if event == "state" and isinstance(data, dict):
-            self.state, self.state_at = data, time.monotonic()
+            self.state, self.stale = data, False
+            self._cancel_stale()
+            self._stale_unsub = async_call_later(self.hass, LIVE_STALE_S, self._stale)
         elif event == "pose" and isinstance(data, list):
             poses = [p for p in data if isinstance(p, dict) and p.get("lon") is not None and p.get("lat") is not None]
             if not poses:
@@ -75,6 +84,19 @@ class GroundskeeperLive:
         else:
             return
         async_dispatcher_send(self.hass, self.signal, event, data)
+
+    @callback
+    def _cancel_stale(self) -> None:
+        if self._stale_unsub:
+            self._stale_unsub()
+            self._stale_unsub = None
+
+    @callback
+    def _stale(self, _now) -> None:
+        """No state event for LIVE_STALE_S: the entities write themselves again and read as unavailable."""
+        self._stale_unsub = None
+        self.stale = True
+        async_dispatcher_send(self.hass, self.signal, "stale", None)
 
     @callback
     def _set_connected(self, connected: bool, error: str | None = None) -> None:
@@ -104,7 +126,7 @@ class GroundskeeperLive:
                     self._logged = self.error
                 wait = LIVE_RETRY_S[1]
             except Exception as err:  # noqa: BLE001  any failure: say so once, wait, reconnect
-                self._set_connected(False, f"{type(err).__name__} {err}".strip())
+                self._set_connected(False, type(err).__name__)  # the type only: aiohttp's text names the host
                 LOGGER.debug("Live feed dropped: %s", self.error)
             await asyncio.sleep(wait)
             wait = min(wait * 2, LIVE_RETRY_S[1])

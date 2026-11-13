@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from homeassistant.const import CONF_API_TOKEN, CONF_URL, CONF_VERIFY_SSL, Platform
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers import config_validation as cv
+from homeassistant.helpers import config_validation as cv, entity_registry as er
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.typing import ConfigType
 
@@ -34,6 +34,23 @@ def _platforms(opts: dict[str, bool]) -> list[Platform]:
 
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
+# The entities each option makes, by unique id suffix and domain: removed from the registry when it is switched off,
+# so they don't linger as "no longer provided" (and a tracker's history is not kept growing on a dead entity).
+OPTION_ENTITIES = {
+    CONF_FOLLOW_CAMERA: (("sensor", "follow_camera"), ("camera", "follow_camera_view")),
+    CONF_DEVICE_TRACKER: (("device_tracker", "tracker"),),
+}
+
+
+def _remove_switched_off(hass: HomeAssistant, entry: GroundskeeperConfigEntry, opts: dict[str, bool]) -> None:
+    registry = er.async_get(hass)
+    for option, entities in OPTION_ENTITIES.items():
+        if opts[option]:
+            continue
+        for domain, key in entities:
+            if entity_id := registry.async_get_entity_id(domain, DOMAIN, f"{entry.unique_id}_{key}"):
+                registry.async_remove(entity_id)
+
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     """The card's websocket commands and file view, once for every entry."""
@@ -53,6 +70,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: GroundskeeperConfigEntry
         coordinator.live = GroundskeeperLive(hass, entry.entry_id, client)
     entry.runtime_data = coordinator
     coordinator.platforms = _platforms(opts)
+    _remove_switched_off(hass, entry, opts)
     await hass.config_entries.async_forward_entry_setups(entry, coordinator.platforms)
     if coordinator.live:
         coordinator.live.start(entry)

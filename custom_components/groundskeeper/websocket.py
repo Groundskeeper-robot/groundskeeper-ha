@@ -7,7 +7,8 @@ own sign-in decides who sees the map. What these commands send is never written 
 - `groundskeeper/map` {entry_id}: the yard map (GeoJSON, bounds, map version, the yard photo's details with its
   address on this integration's imagery view). Map option.
 - `groundskeeper/subscribe` {entry_id}: the live feed. First a `snapshot` event (the last state, the newest pose,
-  whether the feed is connected), then each `state`, `pose` and `connection` event as it comes. Without the Map
+  whether the feed is connected), then each `state`, `pose`, `connection` and `stale` event as it comes. A `closed`
+  event ends it: the entry unloaded or reloaded (an option changed), and the card subscribes again if it wants. Without the Map
   option the robot's position is left out of everything sent.
 """
 
@@ -89,13 +90,20 @@ def ws_subscribe(hass: HomeAssistant, connection: websocket_api.ActiveConnection
     if live is None:
         connection.send_error(msg["id"], "live_off", "The map and follow camera are switched off in the options")
         return
-    show_position = options(coordinator.config_entry)[CONF_MAP]
+    entry = coordinator.config_entry
 
     def shown(event: str, data: Any) -> Any:
-        return data if show_position else without_position(event, data)
+        # Read on every event, not once: what the person switched off stops at once, whatever else happens.
+        return data if options(entry)[CONF_MAP] else without_position(event, data)
 
     @callback
     def forward(event: str, data: Any) -> None:
+        if event == "closed":
+            connection.send_message(websocket_api.event_message(msg["id"], {"event": "closed", "data": None}))
+            unsub = connection.subscriptions.pop(msg["id"], None)
+            if unsub:
+                unsub()
+            return
         out = shown(event, data)
         if out is not None:
             connection.send_message(websocket_api.event_message(msg["id"], {"event": event, "data": out}))
@@ -104,7 +112,7 @@ def ws_subscribe(hass: HomeAssistant, connection: websocket_api.ActiveConnection
     connection.send_result(msg["id"])
     snapshot = {
         "state": shown("state", live.state),
-        "pose": live.pose if show_position else None,
+        "pose": live.pose if options(entry)[CONF_MAP] else None,
         "connected": live.connected,
     }
     connection.send_message(websocket_api.event_message(msg["id"], {"event": "snapshot", "data": snapshot}))

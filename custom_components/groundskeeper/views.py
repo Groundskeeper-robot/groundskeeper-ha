@@ -25,6 +25,11 @@ from .coordinator import options
 MAX_ZOOM = 24
 
 
+def photo_name_ok(name: str) -> bool:
+    """A yard photo's file name: letters, digits, `_`, `-` and `.`, never starting with a dot (so never `..`)."""
+    return bool(IMAGERY_NAME.fullmatch(name)) and not name.startswith(".")
+
+
 @callback
 def async_register(hass: HomeAssistant) -> None:
     hass.http.register_view(TileView())
@@ -77,6 +82,6 @@ class YardPhotoView(HomeAssistantView):
     requires_auth = True
 
     async def get(self, request: web.Request, entry_id: str, name: str) -> web.Response:
-        if not IMAGERY_NAME.fullmatch(name) or name.startswith("."):
+        if not photo_name_ok(name):
             return web.Response(status=HTTPStatus.NOT_FOUND)
         return await _pass(request.app[KEY_HASS], entry_id, f"/imagery/{name}", "private, max-age=86400")

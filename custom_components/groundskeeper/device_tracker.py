@@ -27,7 +27,7 @@ class GroundskeeperTracker(GroundskeeperLiveEntity, TrackerEntity):
     _attr_source_type = SourceType.GPS
     # The state event (every 5 s) carries the position, and `position` takes a newer pose if one came: writing on
     # every pose (about one a second while mowing) would fill the recorder for little gain.
-    live_events = ("state", "connection")
+    live_events = ("state", "connection", "stale")
 
     def __init__(self, coordinator) -> None:
         super().__init__(coordinator, "tracker")

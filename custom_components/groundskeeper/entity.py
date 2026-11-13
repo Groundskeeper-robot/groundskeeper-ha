@@ -43,7 +43,7 @@ class GroundskeeperLiveEntity(GroundskeeperEntity):
     """An entity fed by the panel's live feed as well: it updates on each event named in `live_events`."""
 
     robot_value = False
-    live_events: tuple[str, ...] = ("state", "connection")
+    live_events: tuple[str, ...] = ("state", "connection", "stale")
 
     @property
     def live(self):

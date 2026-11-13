@@ -3,7 +3,10 @@ Synthetic data only; the panel is a mock."""
 
 from __future__ import annotations
 
+from datetime import timedelta
 from http import HTTPStatus
+
+import aiohttp
 
 import pytest
 
@@ -14,12 +17,15 @@ from custom_components.groundskeeper.const import (
     CONF_MAP,
     IMAGERY_PATH,
     LIVE_API,
+    LIVE_STALE_S,
     MAP_PATH,
 )
 from custom_components.groundskeeper.diagnostics import async_get_config_entry_diagnostics
 from homeassistant.const import STATE_UNAVAILABLE
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.dispatcher import async_dispatcher_send
+from homeassistant.util import dt as dt_util
+from pytest_homeassistant_custom_component.common import async_fire_time_changed
 
 from .conftest import LIVE_STATE, POSE, URL, set_up, sse
 
@@ -220,8 +226,8 @@ async def test_tiles_and_the_yard_photo_pass_through(hass, aioclient_mock, entry
         "tiles/other/1/0/0.jpg",  # not a tile kind the panel serves
         "tiles/src/2/4/0.jpg",  # off the edge of the world at that zoom
         "tiles/src/30/0/0.jpg",  # deeper than any imagery
-        "imagery/..",  # not a file name
-        "imagery/.hidden",
+        "imagery/.hidden",  # the view's own check (a `..` never reaches it: the path is tidied first)
+        "imagery/a%2Fb.jpg",  # an encoded slash is not a file name either
     ],
 )
 async def test_nothing_else_passes_through(hass, aioclient_mock, entry, hass_client, path):
@@ -238,6 +244,56 @@ async def test_imagery_needs_a_signed_in_person(hass, aioclient_mock, entry, has
     client = await hass_client_no_auth()
     r = await client.get(f"/api/groundskeeper/{entry.entry_id}/imagery/yard.jpg")
     assert r.status == 401
+
+
+def test_a_photo_name_is_a_plain_file_name():
+    from custom_components.groundskeeper.views import photo_name_ok
+
+    assert photo_name_ok("yard-d1c9.jpg")
+    for bad in ("..", ".", ".hidden", "a/b.jpg", "a\b.jpg", "", "x" * 81):
+        assert not photo_name_ok(bad), bad
+
+
+async def test_diagnostics_never_carry_the_panels_address(hass, aioclient_mock, entry):
+    refused = aiohttp.ClientError("Cannot connect to host 192.0.2.20:8425 ssl:default")
+    await set_up(hass, entry, aioclient_mock, live_exc=refused)
+    assert entry.runtime_data.live.error == "CannotConnect"  # aiohttp's text names the host; only the type is kept
+    diag = await async_get_config_entry_diagnostics(hass, entry)
+    assert diag["live"]["error"] == "CannotConnect" and "192.0.2.20" not in str(diag)
+
+
+async def test_live_entities_go_unavailable_when_the_feed_goes_quiet(hass, aioclient_mock, entry):
+    await set_up(hass, entry, aioclient_mock)
+    assert hass.states.get(SENSOR).state == "garden"
+    entry.runtime_data.live._task.cancel()  # no reconnect: nothing more comes from the panel
+    async_fire_time_changed(hass, dt_util.utcnow() + timedelta(seconds=LIVE_STALE_S + 1))
+    await hass.async_block_till_done()
+    assert hass.states.get(SENSOR).state == STATE_UNAVAILABLE
+    entry.runtime_data.live.handle("state", LIVE_STATE)  # the next state brings it back
+    await hass.async_block_till_done()
+    assert hass.states.get(SENSOR).state == "garden"
+
+
+async def _subscribed(hass, entry, hass_ws_client):
+    ws = await hass_ws_client(hass)
+    await ws.send_json({"id": 1, "type": "groundskeeper/subscribe", "entry_id": entry.entry_id})
+    assert (await ws.receive_json())["success"]
+    assert (await ws.receive_json())["event"]["event"] == "snapshot"
+    return ws
+
+
+async def test_a_reload_ends_the_cards_subscription(hass, aioclient_mock, entry, hass_ws_client):
+    await set_up(hass, entry, aioclient_mock)
+    ws = await _subscribed(hass, entry, hass_ws_client)
+    old = entry.runtime_data.live.signal
+    hass.config_entries.async_update_entry(entry, options={CONF_MAP: False})  # an option change reloads the entry
+    await hass.async_block_till_done()
+    assert (await ws.receive_json())["event"] == {"event": "closed", "data": None}
+    assert entry.runtime_data.live.signal != old  # the new feed is on a new signal: the old subscription hears nothing
+    async_dispatcher_send(hass, old, "pose", [POSE])
+    async_dispatcher_send(hass, entry.runtime_data.live.signal, "pose", [POSE])
+    await ws.send_json({"id": 2, "type": "ping"})
+    assert (await ws.receive_json())["type"] == "pong"  # the next message is the pong: no pose came through
 
 
 async def test_diagnostics_leave_out_the_position(hass, aioclient_mock, entry):
@@ -257,5 +313,6 @@ async def test_the_options_flow(hass, aioclient_mock, entry):
     )
     await hass.async_block_till_done()
     assert entry.options == {CONF_MAP: True, CONF_FOLLOW_CAMERA: False, CONF_DEVICE_TRACKER: True}
-    assert hass.states.get(SENSOR) is None or hass.states.get(SENSOR).state == STATE_UNAVAILABLE
+    assert hass.states.get(SENSOR) is None and hass.states.get(CAMERA) is None  # gone, not "no longer provided"
+    assert er.async_get(hass).async_get_entity_id("sensor", "groundskeeper", f"{entry.unique_id}_follow_camera") is None
     assert hass.states.get(TRACKER) is not None
