@@ -78,9 +78,15 @@ Groundskeeper → Configure** chooses what it follows:
 | Commands | **Off** | Start, pause, resume, stop and dock, through the panel. See [Commands](#commands). |
 
 The card asks Home Assistant, never the panel, so the API token stays on the Home Assistant server: the websocket
-commands `groundskeeper/map` and `groundskeeper/subscribe` and the imagery views under
+commands `groundskeeper/map`, `groundskeeper/ground` and `groundskeeper/subscribe` and the views under
 `/api/groundskeeper/<entry>/` need a signed-in Home Assistant user, and pass on only the map, the live feed, imagery
-tiles and the yard photo.
+tiles, the yard photo and, for a 3D view, the panel's ground and its two map libraries.
+
+The libraries (MapLibre GL and three.js) pass only with the exact contents of the versions the panel ships, checked
+by their SHA-256 and served as plain JavaScript and CSS: a panel that sent anything else could otherwise run its own
+script on Home Assistant's address. A panel that moves to newer versions needs an integration release that knows
+them; until then the 3D view isn't offered. The first ground read after the panel starts can take up to a minute
+or so while the panel fetches lidar for the yard.
 
 ## Commands
 

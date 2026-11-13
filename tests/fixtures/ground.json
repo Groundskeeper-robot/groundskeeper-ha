@@ -1,0 +1,18 @@
+{
+  "version": "0acb3deab3",
+  "sources": [
+    "robot",
+    "lidar"
+  ],
+  "bounds": [
+    -122.6847274,
+    45.5995034,
+    -122.6791679,
+    45.6030697
+  ],
+  "minzoom": 14,
+  "maxzoom": 18,
+  "relief_m": 5.24,
+  "robot_share": 0.161,
+  "encoding": "terrarium"
+}
