@@ -13,6 +13,7 @@ import pytest
 from custom_components.groundskeeper.api import parse_sse
 from custom_components.groundskeeper.const import (
     CARD_URL,
+    CONF_COMMANDS,
     CONF_DEVICE_TRACKER,
     CONF_FOLLOW_CAMERA,
     CONF_MAP,
@@ -311,7 +312,9 @@ async def test_diagnostics_leave_out_the_position(hass, aioclient_mock, entry):
     assert diag["live"]["connected"] is not None and diag["live"]["has_pose"] is True
     for spot in (POSE, LIVE_STATE["position"], *DEMO_POSES):
         assert str(spot["lat"]) not in str(diag) and str(spot["lon"]) not in str(diag)
-    assert diag["options"] == {CONF_MAP: True, CONF_FOLLOW_CAMERA: True, CONF_DEVICE_TRACKER: False}
+    assert diag["options"] == {
+        CONF_MAP: True, CONF_FOLLOW_CAMERA: True, CONF_DEVICE_TRACKER: False, CONF_COMMANDS: False
+    }
 
 
 async def test_the_options_flow(hass, aioclient_mock, entry):
@@ -322,7 +325,7 @@ async def test_the_options_flow(hass, aioclient_mock, entry):
         result["flow_id"], {CONF_MAP: True, CONF_FOLLOW_CAMERA: False, CONF_DEVICE_TRACKER: True}
     )
     await hass.async_block_till_done()
-    assert entry.options == {CONF_MAP: True, CONF_FOLLOW_CAMERA: False, CONF_DEVICE_TRACKER: True}
+    assert entry.options == {CONF_MAP: True, CONF_FOLLOW_CAMERA: False, CONF_DEVICE_TRACKER: True, CONF_COMMANDS: False}
     assert hass.states.get(SENSOR) is None and hass.states.get(CAMERA) is None  # gone, not "no longer provided"
     assert er.async_get(hass).async_get_entity_id("sensor", "groundskeeper", f"{entry.unique_id}_follow_camera") is None
     assert hass.states.get(TRACKER) is not None

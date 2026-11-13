@@ -1,0 +1,37 @@
+{
+  "plans": [
+    {
+      "id": 1,
+      "name": "Mow All",
+      "areaIds": [
+        11,
+        12,
+        13
+      ],
+      "enable_self_order": true
+    },
+    {
+      "id": 2,
+      "name": "Front lawn",
+      "areaIds": [
+        11
+      ],
+      "enable_self_order": true
+    }
+  ],
+  "areas": [
+    {
+      "id": 11,
+      "name": "Front lawn"
+    },
+    {
+      "id": 12,
+      "name": "Back lawn"
+    },
+    {
+      "id": 13,
+      "name": "Side strip"
+    }
+  ],
+  "blocked": "map writing is switched off (Settings → Safety)"
+}

@@ -1,4 +1,5 @@
-"""The robot as a lawn mower entity. Read-only in this version: it offers no actions."""
+"""The robot as a lawn mower entity. With the Commands option it starts, pauses and docks through the panel, which
+sends only with its Control switch on and every check passing; without it, it offers no actions."""
 
 from __future__ import annotations
 
@@ -6,8 +7,10 @@ from typing import Any
 
 from homeassistant.components.lawn_mower import LawnMowerActivity, LawnMowerEntity, LawnMowerEntityFeature
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
+from .commands import commands_on, send_or_raise
 from .coordinator import GroundskeeperConfigEntry
 from .entity import GroundskeeperEntity
 
@@ -46,7 +49,29 @@ class GroundskeeperMower(GroundskeeperEntity, LawnMowerEntity):
     """What the robot is doing, as the panel sees it."""
 
     _attr_name = None
-    _attr_supported_features = LawnMowerEntityFeature(0)
+
+    @property
+    def supported_features(self) -> LawnMowerEntityFeature:
+        if commands_on(self.coordinator):
+            return LawnMowerEntityFeature.START_MOWING | LawnMowerEntityFeature.PAUSE | LawnMowerEntityFeature.DOCK
+        return LawnMowerEntityFeature(0)
+
+    async def async_start_mowing(self) -> None:
+        """Resume a paused plan, else start the plan the panel would start (its start check's plan)."""
+        if self.activity == LawnMowerActivity.PAUSED:
+            await send_or_raise(self.coordinator, "resume")
+            return
+        can_start = self.coordinator.data.get("can_start")
+        plan = can_start.get("plan_id") if isinstance(can_start, dict) else None
+        if not isinstance(plan, int) or isinstance(plan, bool):
+            raise HomeAssistantError("The panel has no plan to start: pick one on the Groundskeeper card")
+        await send_or_raise(self.coordinator, "start_plan", plan)
+
+    async def async_pause(self) -> None:
+        await send_or_raise(self.coordinator, "pause")
+
+    async def async_dock(self) -> None:
+        await send_or_raise(self.coordinator, "cmd_recharge")
 
     @property
     def activity(self) -> LawnMowerActivity | None:

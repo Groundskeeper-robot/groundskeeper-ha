@@ -6,8 +6,9 @@ Assistant through your [Groundskeeper](https://github.com/Groundskeeper-robot/gr
 Home Assistant talks to the panel, never to the robot. The panel keeps the robot connection, the safety checks and the
 audit log, and Home Assistant reads what the panel knows.
 
-**This version only reads.** It sends nothing to the robot: the mower entity offers no Start, Pause or Dock. Commands
-will come in a later version, behind a switch of their own in the panel and the same checks as the panel's buttons.
+**It reads unless you switch Commands on.** With the **Commands** option (off by default) the mower entity starts,
+pauses and docks, and the card gets Start, Pause, Resume, Stop and Dock, all asked of the panel: it sends only with
+its own Control switch on and every check passing. See [Commands](#commands).
 
 Independent community project, not affiliated with Yarbo.
 
@@ -74,13 +75,36 @@ Groundskeeper → Configure** chooses what it follows:
 | Map | On | The yard map and the robot's live position for the Groundskeeper card. Nothing in an entity. |
 | Follow camera | On | **Follow camera** sensor: the Frigate camera whose coverage holds the robot, as the panel's Live picks it (`covered` is off when none does and it's the first yard camera). **Follow camera** camera entity: that camera's picture through the panel. If Frigate is already in Home Assistant, its own camera entity for the named camera shows the same picture directly. |
 | Device tracker | **Off** | **Position**: the robot on Home Assistant's own map, updated every 5 seconds while the feed runs. |
+| Commands | **Off** | Start, pause, resume, stop and dock, through the panel. See [Commands](#commands). |
 
 The card asks Home Assistant, never the panel, so the API token stays on the Home Assistant server: the websocket
 commands `groundskeeper/map` and `groundskeeper/subscribe` and the imagery views under
 `/api/groundskeeper/<entry>/` need a signed-in Home Assistant user, and pass on only the map, the live feed, imagery
 tiles and the yard photo.
 
+## Commands
+
+Off until you switch **Commands** on under **Configure**. Then:
+
+- The mower entity's **Start** resumes a paused plan, or starts the plan the panel's start check names (the one on
+  its **Can start** sensor). **Pause** pauses, **Dock** sends it back to its dock. They work in automations too, and
+  go at once: the entity's Start has no confirm step (the card's Start and Resume do).
+- The card shows **Start** (pick a plan, see the panel's checks first), **Pause**, **Resume**, **Stop** and **Dock**.
+
+Home Assistant only asks. The panel sends a command only with its **Control** switch on (Settings → Safety in the
+panel) and every check passing, and it holds an API token to its strictest reading: a check it can't answer counts
+as a fail, and there is no override. Pause, stop and dock need only the robot online and reachable; the start
+checks (yard clear, lawn dry, battery and the rest) are for starting and resuming. A refusal shows the panel's
+reason. Every command is in the panel's audit log, from "token".
+
+Anyone allowed to control the mower entity in Home Assistant can press these: by default every user, admin or not.
+Nothing else is sent: not the cameras or keep-awake, no settings, never manual driving.
+
 ## The Groundskeeper card
+
+![The Groundskeeper card: status chips, controls and the yard map, in the panel's demo yard][card-shot]
+
+[card-shot]: https://raw.githubusercontent.com/Groundskeeper-robot/groundskeeper-ha/main/docs/card.png
 
 The integration brings its own dashboard card; there is no resource to add. Edit a dashboard, **Add card**, search
 for **Groundskeeper**, or in YAML:
@@ -95,6 +119,9 @@ It shows:
 - **Map:** the yard photo with your areas, no-go zones, no-vision zones, pathways and the dock, the current run's track
   coloured by RTK fix (green fixed, amber float, orange single), and the robot with its heading, moving live. The
   crosshair button follows the robot. Needs the **Map** option.
+- **Controls**, with the **Commands** option on: **Start** opens the plan list and the panel's checks for it, and
+  starts only when the panel says it would; **Pause**, **Stop** and **Dock** go at once; **Resume** asks for a second
+  tap. Which ones show follows what the mower is doing. See [Commands](#commands).
 - **Follow camera:** the Frigate camera that covers the robot, switching as the robot moves. If Frigate is in Home
   Assistant too, the card uses Frigate's own camera entity for that camera; otherwise the integration's Follow camera
   (through the panel). Needs the **Follow camera** option and Frigate set up in the panel.
@@ -105,11 +132,11 @@ Options (all in the visual editor):
 |---|---|---|
 | `entry_id` | the first robot | Which Groundskeeper entry, with more than one robot |
 | `title` | none | A heading |
-| `show_status`, `show_map`, `show_camera` | `true` | Which parts to show |
+| `show_status`, `show_controls`, `show_map`, `show_camera` | `true` | Which parts to show (controls: Commands on) |
 | `camera` | `auto` | `auto`: Frigate's own entity when there is one; `integration`: always through the panel |
 | `map_height` | `320` | The map's height in pixels |
 
-The card reads only: nothing on it sends anything to the robot. It talks to Home Assistant, never to the panel.
+Without the Commands option the card only reads. It talks to Home Assistant, never to the panel.
 
 ## Privacy
 

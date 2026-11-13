@@ -1,0 +1,130 @@
+{
+  "cmd": "start_plan",
+  "enabled": false,
+  "would_send": false,
+  "reason": "Route to the robot: no route to the robot; Not already running: a run is in progress; Yard clear (Frigate): Frigate not set up; Phone app not driving it: unknown (no link to the robot); Someone home (Alarmo): unknown (Home Assistant not connected)",
+  "checks": [
+    {
+      "name": "Robot online",
+      "ok": true,
+      "hard": true,
+      "detail": "last snapshot 0.3 s ago"
+    },
+    {
+      "name": "Route to the robot",
+      "ok": false,
+      "hard": true,
+      "detail": "no route to the robot"
+    },
+    {
+      "name": "No write to the robot in progress",
+      "ok": true,
+      "hard": true,
+      "detail": "no write in progress"
+    },
+    {
+      "name": "Plan exists",
+      "ok": true,
+      "hard": true,
+      "detail": "plan 2"
+    },
+    {
+      "name": "No active error",
+      "ok": true,
+      "hard": true,
+      "detail": "error code none"
+    },
+    {
+      "name": "Battery",
+      "ok": true,
+      "hard": true,
+      "detail": "73% (minimum 30%)"
+    },
+    {
+      "name": "Not already running",
+      "ok": false,
+      "hard": true,
+      "detail": "a run is in progress"
+    },
+    {
+      "name": "Yard clear (Frigate)",
+      "ok": false,
+      "hard": true,
+      "detail": "Frigate not set up"
+    },
+    {
+      "name": "Phone app not driving it",
+      "ok": false,
+      "hard": true,
+      "detail": "unknown (no link to the robot)"
+    },
+    {
+      "name": "Lawn dry",
+      "ok": true,
+      "hard": true,
+      "detail": "Dry"
+    },
+    {
+      "name": "Someone home (Alarmo)",
+      "ok": false,
+      "hard": true,
+      "detail": "unknown (Home Assistant not connected)"
+    }
+  ],
+  "why": [
+    {
+      "code": "control_off",
+      "title": "Control is switched off",
+      "fix": "Switch it on in Settings → Safety",
+      "detail": "",
+      "link": "#settings/safety",
+      "severity": "block",
+      "source": "switch"
+    },
+    {
+      "code": "no_route",
+      "title": "The panel cannot reach the robot",
+      "fix": "Check the Yarbo cloud in Settings → Robot: sign in, or wait while it reconnects",
+      "detail": "no route to the robot",
+      "link": "#settings/robot",
+      "severity": "block",
+      "source": "check"
+    },
+    {
+      "code": "running",
+      "title": "A run is already going",
+      "fix": "Wait for it to finish, or stop it",
+      "detail": "a run is in progress",
+      "link": "#live",
+      "severity": "block",
+      "source": "check"
+    },
+    {
+      "code": "yard",
+      "title": "Someone (or an animal) is in the yard, or the cameras cannot tell",
+      "fix": "Wait until the yard is clear; check Frigate if the cameras are down",
+      "detail": "Frigate not set up",
+      "link": "#settings/cameras",
+      "severity": "block",
+      "source": "check"
+    },
+    {
+      "code": "phone_app",
+      "title": "The Yarbo app is driving it, or the panel cannot tell",
+      "fix": "Close the robot's screen in the Yarbo app. If the panel cannot tell, sign in to the Yarbo cloud (it shows the app's keep-awake) or start from the panel yourself",
+      "detail": "unknown (no link to the robot)",
+      "link": "#settings/robot",
+      "severity": "block",
+      "source": "check"
+    },
+    {
+      "code": "presence",
+      "title": "Nobody is home, or Home Assistant cannot tell",
+      "fix": "Starts need someone home; check Home Assistant if it is down",
+      "detail": "unknown (Home Assistant not connected)",
+      "link": "#settings/ha",
+      "severity": "block",
+      "source": "check"
+    }
+  ]
+}

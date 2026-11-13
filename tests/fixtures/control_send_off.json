@@ -1,0 +1,18 @@
+{
+  "sent": false,
+  "cmd": "pause",
+  "refused": "control is switched off (Settings → Safety)",
+  "checks": [],
+  "why": [
+    {
+      "code": "control_off",
+      "title": "Control is switched off",
+      "fix": "Switch it on in Settings → Safety",
+      "detail": "",
+      "link": "#settings/safety",
+      "severity": "block",
+      "source": "switch"
+    }
+  ],
+  "latency_ms": 2
+}

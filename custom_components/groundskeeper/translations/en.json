@@ -3,7 +3,7 @@
     "step": {
       "user": {
         "title": "Connect to your Groundskeeper panel",
-        "description": "Home Assistant talks to the panel, never to the robot. Make an API token in the panel under Settings → Access, then paste it here. This version only reads: it sends nothing to the robot.",
+        "description": "Home Assistant talks to the panel, never to the robot. Make an API token in the panel under Settings → Access, then paste it here. It reads, and sends commands only if you switch Commands on in its options.",
         "data": {
           "url": "Panel address",
           "api_token": "API token",
@@ -41,17 +41,19 @@
   "options": {
     "step": {
       "init": {
-        "title": "What to follow live",
-        "description": "What Groundskeeper follows live from the panel. Only the device tracker records a position.",
+        "title": "Groundskeeper options",
+        "description": "What Groundskeeper follows live from the panel, and whether it may ask the panel for commands. Only the device tracker records a position.",
         "data": {
           "map": "Map",
           "follow_camera": "Follow camera",
-          "device_tracker": "Device tracker"
+          "device_tracker": "Device tracker",
+          "commands": "Commands"
         },
         "data_description": {
           "map": "The yard map and live position, for the card only: never in history.",
           "follow_camera": "Which Frigate camera covers the robot: a sensor (recorded) and a camera.",
-          "device_tracker": "The robot on Home Assistant's map. Its position is kept in history."
+          "device_tracker": "The robot on Home Assistant's map. Its position is kept in history.",
+          "commands": "Start, pause, resume, stop and dock from Home Assistant (the mower and the card). The panel still decides: only with its Control switch on and every check passing, at its strictest. Anyone who can use your dashboards can press them."
         }
       }
     }

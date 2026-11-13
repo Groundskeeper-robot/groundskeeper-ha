@@ -3,7 +3,12 @@
  * Served by the Groundskeeper integration and loaded on every dashboard; no build step, no libraries. Everything it
  * shows comes from Home Assistant: the entities, and the integration's websocket commands (groundskeeper/map,
  * groundskeeper/track, groundskeeper/subscribe) and imagery view. It never talks to the panel, so the panel's token
- * stays on the Home Assistant server. It reads only: nothing here can send anything to the robot.
+ * stays on the Home Assistant server.
+ *
+ * Controls (Start, Pause, Resume, Stop, Dock) show only when the integration's Commands option is on. They ask the
+ * integration (groundskeeper/plans, /preview, /command), which asks the panel; the panel sends only with its Control
+ * switch on and every check passing. Start shows the panel's checks first and needs a confirm, Resume a second tap;
+ * Pause, Stop and Dock, which stop the robot, go at once.
  *
  * The map is an SVG in metres around the yard (north up), over the panel's yard photo. Text from the panel or
  * Home Assistant is always set as text, never as HTML.
@@ -29,13 +34,43 @@ const RETRY_OFF_MS = 60000;                              // the map and camera s
 const WATCHDOG_MS = 30000;                               // nothing on the feed for this long: subscribe again
 const TRACK_EVERY_MS = 10000;                            // the current run's new points, at most this often
 const RESIGN_MS = 20 * 3600 * 1000;                      // the photo's signed address lasts 24 h: renew before
+const PLANS_RETRY_MS = 60000;                            // the plans could not be read: ask again this often at most
+const SAY_MS = 12000;                                    // how long a command's result stays under the buttons
+const TAP_AGAIN_MS = 4000;                               // Resume: the second tap must come this soon
+const PREVIEW_EVERY_MS = 30000;                          // Start's checks, asked again this often while it is open
 
-const DEFAULTS = { show_status: true, show_map: true, show_camera: true, camera: "auto", map_height: 320 };
+// Which controls make sense in each mower state (Home Assistant's lawn_mower states). Unknown: all of them.
+const CONTROLS = {
+  mowing: ["pause", "stop", "cmd_recharge"],
+  paused: ["resume", "stop", "cmd_recharge"],
+  returning: ["pause", "stop"],
+  docked: ["start_plan"],
+  idle: ["start_plan", "cmd_recharge"],
+  error: ["stop", "cmd_recharge"],
+};
+const CONTROL_ALL = ["start_plan", "pause", "resume", "stop", "cmd_recharge"];
+// What a command waits on while its request is out. Start and Resume (they set the robot moving) wait on each other;
+// Pause, Stop and Dock each wait only on themselves, so nothing ever holds back a Stop.
+const MOVES = ["start_plan", "resume"];
+const kindOf = (name) => (MOVES.includes(name) ? "move" : name);
+// Errors that mean the integration answered and nothing was sent. Anything else (no answer from the panel, the
+// connection to Home Assistant lost) leaves it unknown whether the command went out.
+const NOT_SENT = ["commands_off", "rejected", "invalid_format", "not_found", "unauthorized"];
+const CONTROL_LABEL = { start_plan: "Start", pause: "Pause", resume: "Resume", stop: "Stop", cmd_recharge: "Dock" };
+const CONTROL_ICON = {
+  start_plan: "mdi:play", pause: "mdi:pause", resume: "mdi:play-pause", stop: "mdi:stop",
+  cmd_recharge: "mdi:home-import-outline",
+};
+
+const DEFAULTS = {
+  show_status: true, show_controls: true, show_map: true, show_camera: true, camera: "auto", map_height: 320,
+};
 
 const LABELS = {
   entry_id: "Robot (Groundskeeper entry)",
   title: "Title",
   show_status: "Status",
+  show_controls: "Controls",
   show_map: "Map",
   show_camera: "Follow camera",
   camera: "Camera source",
@@ -96,6 +131,9 @@ class GroundskeeperCard extends HTMLElement {
     this._drawn = null;         // how much of the track is drawn: {run, n, colour, last}
     this._notes = {};
     this._chips = {};
+    this._cmd = {
+      on: null, plans: [], plan: null, tried: 0, pending: {}, open: false, preview: null, asked: 0,
+    };
   }
 
   /* -- Lovelace API ------------------------------------------------------------------------------------------ */
@@ -118,7 +156,7 @@ class GroundskeeperCard extends HTMLElement {
       this._built = false;
     }
     if (!this._built) this._render();
-    else this._updateStatus();
+    else { this._updateStatus(); this._updateControls(); }
     if (first || !this._unsub) this._start();
     this._updateCamera();
   }
@@ -136,7 +174,9 @@ class GroundskeeperCard extends HTMLElement {
 
   getGridOptions() { return { columns: 12, rows: "auto", min_columns: 6 }; }   // height follows the content
 
-  static getStubConfig() { return { show_status: true, show_map: true, show_camera: true, camera: "auto" }; }
+  static getStubConfig() {
+    return { show_status: true, show_controls: true, show_map: true, show_camera: true, camera: "auto" };
+  }
 
   static getConfigForm() {
     return {
@@ -146,6 +186,7 @@ class GroundskeeperCard extends HTMLElement {
         {
           type: "grid", name: "", schema: [
             { name: "show_status", default: true, selector: { boolean: {} } },
+            { name: "show_controls", default: true, selector: { boolean: {} } },
             { name: "show_map", default: true, selector: { boolean: {} } },
             { name: "show_camera", default: true, selector: { boolean: {} } },
           ],
@@ -222,6 +263,9 @@ class GroundskeeperCard extends HTMLElement {
     this._track = { run: null, points: [], since: 0, busy: false, at: 0 };
     this._trail = [];
     this._drawn = null;
+    this._cmd = {
+      on: null, plans: [], plan: null, tried: 0, pending: {}, open: false, preview: null, asked: 0,
+    };
   }
 
   async _start() {
@@ -286,11 +330,17 @@ class GroundskeeperCard extends HTMLElement {
       this._map = null;
       this._mapSha = undefined;
       this._mapOff = false;
+      this._cmd.on = null;             // the Commands option may have changed too
+      this._cmd.tried = 0;
       this._retry(RESUBSCRIBE_MS);
       return;
     }
     if (event === "snapshot") {
       this._connected = data.connected;
+      if (this._cmd.on !== true) {                     // a (re)subscribe: the Commands option may be on now
+        this._cmd.tried = 0;
+        this._updateControls();
+      }
       if (data.state) this._onState(data.state);
       if (data.pose) this._onPoses([data.pose]);
     } else if (event === "state") {
@@ -399,13 +449,15 @@ class GroundskeeperCard extends HTMLElement {
     this._noteEl = el("div", { class: "note", hidden: true });
     this._showNotes();
     this._statusEl = c.show_status ? el("div", { class: "status" }) : null;
+    this._controlsEl = c.show_controls ? el("div", { class: "controls", hidden: true }) : null;
+    this._ctl = {};
     this._chips = {};
     this._liveEl = null;
     this._mapWrap = c.show_map ? el("div", { class: "map", style: `height:${Number(c.map_height) || 320}px` }) : null;
     this._camWrap = c.show_camera ? el("div", { class: "camera" }) : null;
     const two = this._mapWrap && this._camWrap ? " two" : "";
     const body = el("div", { class: `body${two}` }, this._mapWrap, this._camWrap);
-    card.append(this._statusEl || "", this._noteEl, body);
+    card.append(this._statusEl || "", this._controlsEl || "", this._noteEl, body);
     root.append(card);
     this._camEntity = null;
     this._camCard = null;
@@ -416,6 +468,7 @@ class GroundskeeperCard extends HTMLElement {
       return;
     }
     this._updateStatus();
+    this._updateControls();
     this._drawMap();
     this._updateCamera();
   }
@@ -494,6 +547,247 @@ class GroundskeeperCard extends HTMLElement {
       else delete button.dataset.entity;
     }
     this._updateLiveNote();
+  }
+
+  /* -- controls (the Commands option) ---------------------------------------------------------------------------- *
+   * The row shows once groundskeeper/plans answers, which it does only with the Commands option on. Buttons are made
+   * once and updated in place (keyboard focus survives hass updates); which show follows the mower's state. */
+  async _loadPlans() {
+    const entry = this._entryId();
+    const cmd = this._cmd;
+    if (!entry || cmd.loading || Date.now() - cmd.tried < PLANS_RETRY_MS) return;
+    cmd.loading = true;
+    cmd.tried = Date.now();
+    let res = null, off = false;
+    try {
+      res = await this._hass.callWS({ type: `${DOMAIN}/plans`, entry_id: entry });
+    } catch (err) {
+      off = err?.code === "commands_off";
+    }
+    cmd.loading = false;
+    if (this._cmd !== cmd) return;                         // another robot was picked meanwhile
+    if (res) {
+      cmd.on = true;
+      cmd.plans = (Array.isArray(res.plans) ? res.plans : []).filter((p) => Number.isInteger(p?.id));
+      if (!cmd.plans.some((p) => p.id === cmd.plan)) {
+        cmd.plan = cmd.plans.some((p) => p.id === res.default) ? res.default : cmd.plans[0]?.id ?? null;
+      }
+    } else if (off) {
+      cmd.on = false;
+      cmd.open = false;
+    } else {
+      // Not answered (the entry still reloading, the panel away): ask again in RETRY_MS, not a whole minute.
+      cmd.tried = Date.now() - PLANS_RETRY_MS + RETRY_MS;
+    }
+    if (res && cmd.open && cmd.preview?.plan !== cmd.plan) this._preview();   // the chosen plan went away
+    this._updateControls();
+  }
+
+  /* Commands were switched off while the card showed them: hide the row (the integration refuses anyway). */
+  _commandsOff() {
+    this._cmd.on = false;
+    this._cmd.open = false;
+    this._updateControls();
+  }
+
+  _updateControls() {
+    const wrap = this._controlsEl;
+    if (!wrap || !this._hass) return;
+    const cmd = this._cmd;
+    if (cmd.on !== true || Date.now() - cmd.tried >= 5 * PLANS_RETRY_MS) this._loadPlans();  // plans rarely change
+    wrap.hidden = cmd.on !== true;
+    if (cmd.on !== true) return;
+    const c = this._ctl;
+    if (!c.row) this._buildControls();
+    const e = this._entities();
+    const state = e.mower ? this._hass.states[e.mower]?.state : undefined;
+    const shown = CONTROLS[state] || CONTROL_ALL;
+    for (const name of CONTROL_ALL) {
+      const b = c.buttons[name];
+      b.hidden = !shown.includes(name);
+      b.disabled = Boolean(cmd.pending[kindOf(name)]);
+      const label = name === "resume" && c.armed === "resume" ? "Tap again to resume" : CONTROL_LABEL[name];
+      if (b.lastChild.textContent !== label) b.lastChild.textContent = label;
+    }
+    if (!shown.includes("start_plan")) cmd.open = false;
+    c.buttons.start_plan.setAttribute("aria-expanded", String(cmd.open));
+    c.panel.hidden = !cmd.open;
+    if (cmd.open) {
+      // The checks change with the robot and the yard: ask again when the mower's state moves, and now and then.
+      const due = state !== c.previewState || Date.now() - (cmd.previewAt || 0) >= PREVIEW_EVERY_MS;
+      if (due && !cmd.previewing) this._preview(true);
+      this._drawStartPanel();
+    }
+    c.previewState = state;
+  }
+
+  _buildControls() {
+    const c = this._ctl;
+    c.buttons = {};
+    c.row = el("div", { class: "ctl-row" });
+    for (const name of CONTROL_ALL) {
+      const b = el("button", { class: `ctl ${name}`, type: "button", onclick: () => this._press(name) },
+        el("ha-icon", { icon: CONTROL_ICON[name] }), el("span", { text: CONTROL_LABEL[name] }));
+      c.buttons[name] = b;
+      c.row.append(b);
+    }
+    c.select = el("select", {
+      "aria-label": "Plan",
+      onchange: () => {
+        this._cmd.plan = Number(c.select.value);
+        this._preview();
+      },
+    });
+    c.checks = el("ul", { class: "checks" });
+    c.verdict = el("div", { class: "verdict" });
+    c.go = el("button", { class: "ctl go", type: "button", onclick: () => this._send("start_plan", this._cmd.plan) },
+      el("ha-icon", { icon: "mdi:play" }), el("span", { text: "Start this plan" }));
+    c.cancel = el("button", {
+      class: "ctl",
+      type: "button",
+      onclick: () => {
+        this._cmd.open = false;
+        this._updateControls();
+      },
+    }, el("span", { text: "Cancel" }));
+    c.panel = el("div", { class: "start", hidden: true },
+      el("label", {}, el("span", { text: "Plan" }), c.select), c.verdict, c.checks,
+      el("div", { class: "ctl-row" }, c.go, c.cancel));
+    c.say = el("div", { class: "say", hidden: true, role: "status" });
+    this._controlsEl.replaceChildren(c.row, c.panel, c.say);
+  }
+
+  _drawStartPanel() {
+    const c = this._ctl;
+    const cmd = this._cmd;
+    if (!c.panel) return;
+    const key = JSON.stringify(cmd.plans);
+    if (c.plansKey !== key) {
+      c.plansKey = key;
+      c.select.replaceChildren(...cmd.plans.map((p) => el("option", { value: p.id, text: p.name })));
+    }
+    if (cmd.plan !== null && c.select.value !== String(cmd.plan)) c.select.value = String(cmd.plan);
+    const pv = cmd.preview;
+    let verdict = "Asking the panel…";
+    let ok = false;
+    const items = [];
+    if (!cmd.plans.length) verdict = "The panel has no plans. Make one in the Yarbo app.";
+    else if (pv?.error) verdict = pv.error;
+    else if (pv && pv.plan === cmd.plan) {
+      ok = pv.would_send === true;
+      verdict = ok ? "The panel would start it now." : "The panel would not start it now:";
+      if (!ok) {
+        for (const w of Array.isArray(pv.why) ? pv.why : []) {
+          if (w?.title) items.push(w.fix ? `${w.title}. ${w.fix}.` : `${w.title}.`);
+        }
+        if (!items.length && pv.reason) items.push(String(pv.reason));
+      }
+    }
+    c.verdict.textContent = verdict;
+    c.verdict.classList.toggle("ok", ok);
+    c.checks.replaceChildren(...items.map((t) => el("li", { text: t })));
+    c.go.disabled = !ok || Boolean(cmd.pending.move);
+  }
+
+  _press(name) {
+    const cmd = this._cmd;
+    const c = this._ctl;
+    if (name === "start_plan") {
+      cmd.open = !cmd.open;
+      if (cmd.open) this._preview();
+      this._updateControls();
+      return;
+    }
+    if (name === "resume" && c.armed !== "resume") {     // it sets the robot moving: a second tap, soon
+      c.armed = "resume";
+      clearTimeout(c.disarm);
+      c.disarm = setTimeout(() => { c.armed = null; this._updateControls(); }, TAP_AGAIN_MS);
+      this._updateControls();
+      return;
+    }
+    c.armed = null;
+    clearTimeout(c.disarm);
+    this._send(name);
+  }
+
+  /* Start's checks for the chosen plan. `again`: the same plan asked afresh, so the last answer stays up meanwhile
+   * (no flicker); a new plan clears it, since that answer was for another plan. */
+  async _preview(again = false) {
+    const cmd = this._cmd;
+    const entry = this._entryId();
+    const plan = cmd.plan;
+    const asked = ++cmd.asked;
+    cmd.previewAt = Date.now();
+    if (!again || cmd.preview?.plan !== plan) {
+      cmd.preview = null;
+      this._drawStartPanel();
+    }
+    if (!entry || plan === null) return;
+    cmd.previewing = true;
+    let pv, off = false;
+    try {
+      pv = await this._hass.callWS({ type: `${DOMAIN}/preview`, entry_id: entry, cmd: "start_plan", plan_id: plan });
+    } catch (err) {
+      off = err?.code === "commands_off";
+      pv = { error: off ? "Commands are switched off in the integration's options."
+        : "The panel could not be asked; try again." };
+    }
+    if (asked === cmd.asked) cmd.previewing = false;
+    if (this._cmd !== cmd || asked !== cmd.asked) return;    // another plan was picked, or another robot
+    if (off) {
+      this._commandsOff();
+      return;
+    }
+    cmd.preview = { ...pv, plan };
+    cmd.previewAt = Date.now();
+    if (cmd.open) this._drawStartPanel();
+  }
+
+  async _send(name, plan) {
+    const cmd = this._cmd;
+    const entry = this._entryId();
+    const kind = kindOf(name);
+    if (!entry || cmd.pending[kind]) return;
+    cmd.pending[kind] = true;
+    this._updateControls();
+    const msg = { type: `${DOMAIN}/command`, entry_id: entry, cmd: name };
+    if (name === "start_plan") msg.plan_id = plan;
+    let text;
+    let ok = false;
+    let off = false;
+    try {
+      const res = await this._hass.callWS(msg);
+      ok = res?.sent === true;
+      text = ok ? `${CONTROL_LABEL[name]} sent. The panel is checking that the robot follows.`
+        : `Not sent: ${res?.why_not || "the panel did not send it"}.`;
+    } catch (err) {
+      off = err?.code === "commands_off";
+      // "Not sent" only when the integration said so. No answer from the panel, or the connection to Home
+      // Assistant lost mid-request: it may have gone out, so say that and never invite a blind retry.
+      text = NOT_SENT.includes(err?.code) ? `Not sent: ${err?.message || "the integration turned it down"}.`
+        : `No answer: ${CONTROL_LABEL[name]} may or may not have gone out. `
+          + "Check what the robot is doing before trying again.";
+    }
+    if (this._cmd !== cmd) return;
+    cmd.pending[kind] = false;
+    if (off) {
+      this._commandsOff();
+      return;
+    }
+    if (ok && name === "start_plan") cmd.open = false;
+    else if (name === "start_plan") this._preview(true);     // refused: show what the panel says now
+    this._say(text, ok);
+    this._updateControls();
+  }
+
+  _say(text, ok) {
+    const c = this._ctl;
+    if (!c.say) return;
+    c.say.textContent = text;
+    c.say.classList.toggle("bad", !ok);
+    c.say.hidden = false;
+    clearTimeout(c.sayTimer);
+    c.sayTimer = setTimeout(() => { c.say.hidden = true; }, SAY_MS);
   }
 
   _drawMap() {
@@ -722,6 +1016,26 @@ const STYLE = `
   .camera { border-radius: 8px; overflow: hidden; }
   .camera hui-picture-entity-card, .camera > * { display: block; }
   .caption { font-size: 12px; color: var(--secondary-text-color); padding: 4px 2px 0; }
+  .controls { padding: 4px 12px; }
+  .ctl-row { display: flex; flex-wrap: wrap; gap: 6px; }
+  .ctl { display: inline-flex; align-items: center; gap: 4px; padding: 6px 12px; border-radius: 18px; cursor: pointer;
+    border: 1px solid var(--divider-color, #444); background: var(--card-background-color, transparent);
+    color: var(--primary-text-color); font: inherit; font-size: 14px; }
+  .ctl ha-icon { --mdc-icon-size: 18px; }
+  .ctl:disabled { opacity: 0.5; cursor: default; }
+  .ctl.go:not(:disabled) { background: var(--primary-color, #03a9f4); border-color: transparent;
+    color: var(--text-primary-color, #fff); }
+  .start { margin-top: 8px; padding: 10px; border-radius: 8px; border: 1px solid var(--divider-color, #444);
+    display: grid; gap: 8px; font-size: 13px; }
+  .start label { display: flex; align-items: center; gap: 8px; }
+  .start select { flex: 1; min-width: 0; padding: 4px; font: inherit; color: var(--primary-text-color);
+    background: var(--card-background-color, transparent); border: 1px solid var(--divider-color, #444);
+    border-radius: 6px; }
+  .verdict { color: var(--secondary-text-color); }
+  .verdict.ok { color: var(--success-color, #8BD49A); }
+  .checks { margin: 0; padding-left: 18px; color: var(--secondary-text-color); }
+  .say { margin-top: 6px; font-size: 13px; color: var(--secondary-text-color); }
+  .say.bad { color: var(--warning-color, #F0B955); }
 `;
 
 if (!customElements.get("groundskeeper-card")) {
@@ -730,8 +1044,9 @@ if (!customElements.get("groundskeeper-card")) {
   window.customCards.push({
     type: "groundskeeper-card",
     name: "Groundskeeper",
-    description: "Your Yarbo's status, the yard map with the robot on it, and the camera that covers it.",
-    preview: false,
+    description: "Your Yarbo's status, the yard map with the robot on it, the camera that covers it, and (with "
+      + "Commands on) start, pause and dock.",
+    preview: true,
     documentationURL: "https://github.com/Groundskeeper-robot/groundskeeper-ha",
   });
   console.info(`%c GROUNDSKEEPER-CARD %c ${CARD_VERSION} `, "background:#2E7D4F;color:#fff", "");
