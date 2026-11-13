@@ -405,7 +405,15 @@ async def test_odd_track_rows_are_left_out(hass, aioclient_mock, entry, hass_ws_
     assert msg["success"] and msg["result"]["points"] == points
 
 
-@pytest.mark.parametrize("body", [{"rows": []}, {"fields": ["ts", "x"], "rows": []}, ["not", "a", "dict"]])
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"rows": []},
+        {"fields": ["ts", "x"], "rows": []},
+        ["not", "a", "dict"],
+        {"fields": ["ts", "lon", "lat"], "rows": 1},
+    ],
+)
 async def test_a_track_of_the_wrong_shape_is_an_error(hass, aioclient_mock, entry, hass_ws_client, body):
     await set_up(hass, entry, aioclient_mock)
     aioclient_mock.get(f"{URL}/api/runs/12/points", json=body)

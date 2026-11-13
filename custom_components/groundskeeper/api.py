@@ -141,8 +141,11 @@ class GroundskeeperClient:
         except ValueError as err:
             raise CannotConnect("the run's points have no position") from err
         rtk = fields.index("rtk_status") if "rtk_status" in fields else None
+        rows = data.get("rows") or []
+        if not isinstance(rows, list):
+            raise CannotConnect("the run's points are not in the expected shape")
         out = []
-        for row in data.get("rows") or []:
+        for row in rows:
             if not isinstance(row, list) or len(row) < len(fields):
                 continue
             t, lon, lat = (row[i] for i in ix)

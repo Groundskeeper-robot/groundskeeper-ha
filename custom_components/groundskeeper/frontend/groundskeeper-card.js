@@ -94,6 +94,7 @@ class GroundskeeperCard extends HTMLElement {
     this._mapTried = 0;
     this._drawn = null;         // how much of the track is drawn: {run, n, colour, last}
     this._notes = {};
+    this._chips = {};
   }
 
   /* -- Lovelace API ------------------------------------------------------------------------------------------ */
@@ -160,7 +161,11 @@ class GroundskeeperCard extends HTMLElement {
             },
           },
         },
-        { name: "map_height", default: DEFAULTS.map_height, selector: { number: { min: 160, max: 900, step: 10, unit_of_measurement: "px" } } },
+        {
+          name: "map_height",
+          default: DEFAULTS.map_height,
+          selector: { number: { min: 160, max: 900, step: 10, unit_of_measurement: "px" } },
+        },
       ],
       computeLabel: (s) => LABELS[s.name],
     };
@@ -301,7 +306,8 @@ class GroundskeeperCard extends HTMLElement {
     this._live = s;
     if (s.position && (!this._pose || (s.position.t || 0) >= (this._pose.t || 0))) this._pose = s.position;
     if (this._config.show_map && !this._mapOff) {
-      if (!this._map && !this._loadingMap && Date.now() - this._mapTried >= RETRY_MS) this._loadMap();   // failed: again
+      // Not read yet, or the last try failed: ask again, at most every RETRY_MS.
+      if (!this._map && !this._loadingMap && Date.now() - this._mapTried >= RETRY_MS) this._loadMap();
       else if (s.map !== undefined && this._mapSha !== undefined && s.map !== this._mapSha) this._loadMap();
     }
     const run = s.run ? s.run.id : null;
@@ -382,16 +388,20 @@ class GroundskeeperCard extends HTMLElement {
     this._noteEl = el("div", { class: "note", hidden: true });
     this._showNotes();
     this._statusEl = c.show_status ? el("div", { class: "status" }) : null;
+    this._chips = {};
+    this._liveEl = null;
     this._mapWrap = c.show_map ? el("div", { class: "map", style: `height:${Number(c.map_height) || 320}px` }) : null;
     this._camWrap = c.show_camera ? el("div", { class: "camera" }) : null;
-    const body = el("div", { class: `body${this._mapWrap && this._camWrap ? " two" : ""}` }, this._mapWrap, this._camWrap);
+    const two = this._mapWrap && this._camWrap ? " two" : "";
+    const body = el("div", { class: `body${two}` }, this._mapWrap, this._camWrap);
     card.append(this._statusEl || "", this._noteEl, body);
     root.append(card);
     this._camEntity = null;
     this._camCard = null;
     this._built = true;
     if (!this._device()) {
-      this._setNote("No Groundskeeper robot found. Add the Groundskeeper integration, or pick the robot in the card's settings.");
+      this._setNote("No Groundskeeper robot found. Add the Groundskeeper integration, "
+        + "or pick the robot in the card's settings.");
       return;
     }
     this._updateStatus();
@@ -424,12 +434,19 @@ class GroundskeeperCard extends HTMLElement {
     this._liveEl.hidden = !off;
   }
 
-  _chip(entityId, icon, text, title) {
-    return el("button", {
-      class: "chip", title: title || text,
-      onclick: () => entityId && this.dispatchEvent(new CustomEvent("hass-more-info",
-        { detail: { entityId }, bubbles: true, composed: true })),
-    }, el("ha-icon", { icon }), el("span", { text }));
+  /* One button per chip, made once and updated in place, so keyboard focus survives hass updates. */
+  _chip(key, icon) {
+    let chip = this._chips[key];
+    if (!chip) {
+      const label = el("span");
+      const button = el("button", {
+        class: "chip",
+        onclick: () => button.dataset.entity && this.dispatchEvent(new CustomEvent("hass-more-info",
+          { detail: { entityId: button.dataset.entity }, bubbles: true, composed: true })),
+      }, el("ha-icon", { icon }), label);
+      chip = this._chips[key] = { button, label };
+    }
+    return chip;
   }
 
   _fmt(entityId) {
@@ -442,17 +459,25 @@ class GroundskeeperCard extends HTMLElement {
   _updateStatus() {
     if (!this._statusEl || !this._hass) return;
     const e = this._entities();
-    const chips = [];
-    const mower = this._fmt(e.mower);
-    chips.push(this._chip(e.mower, "mdi:robot-mower", mower ?? "Unavailable"));
-    const bat = this._fmt(e.battery);
-    if (bat !== null) chips.push(this._chip(e.battery, "mdi:battery", bat));
-    const fix = this._fmt(e.positioning);
-    if (fix !== null) chips.push(this._chip(e.positioning, "mdi:crosshairs-gps", fix));
-    const check = this._fmt(e.start_check);
-    if (check !== null) chips.push(this._chip(e.start_check, "mdi:clipboard-check-outline", check));
-    this._liveEl = el("span", { class: "paused", hidden: true });
-    this._statusEl.replaceChildren(...chips, this._liveEl);
+    const rows = [
+      ["mower", "mdi:robot-mower", e.mower, this._fmt(e.mower) ?? "Unavailable"],
+      ["battery", "mdi:battery", e.battery, this._fmt(e.battery)],
+      ["positioning", "mdi:crosshairs-gps", e.positioning, this._fmt(e.positioning)],
+      ["start_check", "mdi:clipboard-check-outline", e.start_check, this._fmt(e.start_check)],
+    ];
+    if (!this._liveEl) {
+      this._liveEl = el("span", { class: "paused", hidden: true });
+      for (const [key, icon] of rows) this._statusEl.append(this._chip(key, icon).button);
+      this._statusEl.append(this._liveEl);
+    }
+    for (const [key, icon, entity, text] of rows) {
+      const { button, label } = this._chip(key, icon);
+      button.hidden = text === null;
+      if (label.textContent !== (text ?? "")) label.textContent = text ?? "";
+      button.title = text ?? "";
+      if (entity) button.dataset.entity = entity;
+      else delete button.dataset.entity;
+    }
     this._updateLiveNote();
   }
 
@@ -506,7 +531,12 @@ class GroundskeeperCard extends HTMLElement {
     this._svg = svg;
     const follow = el("button", {
       class: "follow", title: "Follow the robot", "aria-pressed": String(this._follow),
-      onclick: () => { this._follow = !this._follow; follow.setAttribute("aria-pressed", String(this._follow)); this._view(); this._drawRobot(); },
+      onclick: () => {
+        this._follow = !this._follow;
+        follow.setAttribute("aria-pressed", String(this._follow));
+        this._view();
+        this._drawRobot();
+      },
     }, el("ha-icon", { icon: "mdi:crosshairs-gps" }));
     wrap.replaceChildren(svg, follow);
     this._drawn = null;
@@ -612,7 +642,8 @@ class GroundskeeperCard extends HTMLElement {
       }
       return;
     }
-    const caption = name ? (follow.covered === false ? `${name}: no camera covers the robot` : `${name}: covers the robot`) : "";
+    let caption = "";
+    if (name) caption = follow.covered === false ? `${name}: no camera covers the robot` : `${name}: covers the robot`;
     if (entity !== this._camEntity) {
       this._camEntity = entity;
       const cfg = { type: "picture-entity", entity, camera_view: "live", show_name: false, show_state: false };
@@ -629,6 +660,7 @@ class GroundskeeperCard extends HTMLElement {
       } catch (_) {
         wrap.replaceChildren(el("div", { class: "empty", text: "The camera could not be shown." }));
         this._camCard = null;
+        if (this._camEntity === entity) this._camEntity = null;      // the next update tries again
         return;
       }
     }
@@ -657,7 +689,8 @@ const STYLE = `
   .area { fill: ${C.area}; fill-opacity: 0.08; stroke: ${C.area}; stroke-width: 2; vector-effect: non-scaling-stroke; }
   .nogo { fill: ${C.nogo}; fill-opacity: 0.22; stroke: ${C.nogo}; stroke-width: 2; vector-effect: non-scaling-stroke; }
   .novis { fill: none; stroke: ${C.novis}; stroke-width: 2; stroke-dasharray: 6 4; vector-effect: non-scaling-stroke; }
-  .road { fill: none; stroke: ${C.road}; stroke-width: 0.9; stroke-linecap: round; stroke-linejoin: round; opacity: 0.95; }
+  .road { fill: none; stroke: ${C.road}; stroke-width: 0.9; stroke-linecap: round; stroke-linejoin: round;
+    opacity: 0.95; }
   .road-mid { fill: none; stroke: #F2F5F3; stroke-width: 1; stroke-dasharray: 4 4; vector-effect: non-scaling-stroke; }
   .dock { fill: ${C.ink}; stroke: ${C.dock}; stroke-width: 2.5; vector-effect: non-scaling-stroke; }
   .track polyline { fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round;
