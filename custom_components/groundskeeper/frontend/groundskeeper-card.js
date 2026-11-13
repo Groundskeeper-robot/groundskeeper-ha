@@ -335,7 +335,8 @@ class GroundskeeperCard extends HTMLElement {
     }
     if (this._trail.length > TRAIL_MAX) this._trail.splice(0, this._trail.length - TRAIL_MAX);
     this._drawRobot();
-    if (this._track.run === null) this._drawTrack();     // a run's track changes only when it is fetched
+    // A run's track changes only when it is fetched; until it has points, the live trail stands in for it.
+    if (this._track.run === null || !this._track.points.length) this._drawTrack();
   }
 
   async _loadMap() {
