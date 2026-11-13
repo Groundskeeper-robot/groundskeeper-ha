@@ -80,7 +80,7 @@ class TileView(HomeAssistantView):
         if zi > MAX_ZOOM or xi >= 2**zi or yi >= 2**zi:
             return web.Response(status=HTTPStatus.NOT_FOUND)
         return await _pass(
-            request.app[KEY_HASS], entry_id, f"/tiles/{kind}/{zi}/{xi}/{yi}.jpg", "private, max-age=86400"
+            request.app[KEY_HASS], entry_id, f"/tiles/{kind}/{zi}/{xi}/{yi}.jpg", "private, no-store"
         )
 
 
@@ -92,4 +92,4 @@ class YardPhotoView(HomeAssistantView):
     async def get(self, request: web.Request, entry_id: str, name: str) -> web.Response:
         if not photo_name_ok(name):
             return web.Response(status=HTTPStatus.NOT_FOUND)
-        return await _pass(request.app[KEY_HASS], entry_id, f"/imagery/{name}", "private, max-age=86400")
+        return await _pass(request.app[KEY_HASS], entry_id, f"/imagery/{name}", "private, no-store")
