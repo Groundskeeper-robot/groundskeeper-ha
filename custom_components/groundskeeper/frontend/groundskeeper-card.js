@@ -27,7 +27,8 @@ const ROBOT_PX = 14;
 const RETRY_MS = 10000;                                  // a failed subscribe, or a map the panel has not read yet
 const RETRY_OFF_MS = 60000;                              // the map and camera switched off in the options
 const WATCHDOG_MS = 30000;                               // nothing on the feed for this long: subscribe again
-const TRACK_EVERY_MS = 10000;                            // the current run's new points, at most this often
+const TRACK_EVERY_MS = 10000;
+const RESIGN_MS = 20 * 3600 * 1000;                      // the photo's signed address lasts 24 h: renew before                            // the current run's new points, at most this often
 
 const DEFAULTS = { show_status: true, show_map: true, show_camera: true, camera: "auto", map_height: 320 };
 
@@ -106,6 +107,7 @@ class GroundskeeperCard extends HTMLElement {
     if (entryChanged) this._reset();
     this._built = false;
     if (this._hass) this._render();
+    if (entryChanged) this._start();                      // the new robot's feed, without waiting for an update
   }
 
   set hass(hass) {
@@ -279,6 +281,8 @@ class GroundskeeperCard extends HTMLElement {
     this._lastEvent = Date.now();
     if (event === "closed") {          // the entry reloaded: subscribe again shortly, and read the map again
       this._stop();                    // also drops it from the client's list, so a reconnect does not revive it
+      this._mapToken = null;           // a map load still running belongs to the closed feed
+      this._loadingMap = false;
       this._map = null;
       this._mapSha = undefined;
       this._mapOff = false;
@@ -309,6 +313,8 @@ class GroundskeeperCard extends HTMLElement {
     if (this._config.show_map && !this._mapOff) {
       // Not read yet, or the last try failed: ask again, at most every RETRY_MS.
       if (!this._map && !this._loadingMap && Date.now() - this._mapTried >= RETRY_MS) this._loadMap();
+      // A card left open for a day: read the map again, which signs the photo's address afresh.
+      else if (this._map && !this._loadingMap && Date.now() - this._mapTried >= RESIGN_MS) this._loadMap();
       else if (s.map !== undefined && this._mapSha !== undefined && s.map !== this._mapSha) this._loadMap();
     }
     const run = s.run ? s.run.id : null;
