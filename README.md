@@ -62,11 +62,30 @@ The Groundskeeper icon ships inside the integration (`brand/`, Home Assistant 20
 The HACS store page before 2026.11 doesn't read icons shipped this way and says the icon isn't available; that's
 HACS, not a missing file.
 
+## Live: follow camera, map and position
+
+Besides the 30-second summary, the integration keeps the panel's live feed open (`GET /api/ha/stream`, in the panel
+release after 0.20.0; with an older panel the rest works and these wait). **Settings → Devices & services →
+Groundskeeper → Configure** chooses what it follows:
+
+| Option | Default | What you get |
+|---|---|---|
+| Map | On | The yard map and the robot's live position for the Groundskeeper card (coming next). Nothing in an entity. |
+| Follow camera | On | **Follow camera** sensor: the Frigate camera whose coverage holds the robot, as the panel's Live picks it (`covered` is off when none does and it's the first yard camera). **Follow camera** camera entity: that camera's picture through the panel. If Frigate is already in Home Assistant, its own camera entity for the named camera shows the same picture directly. |
+| Device tracker | **Off** | **Position**: the robot on Home Assistant's own map, updated every 5 seconds while the feed runs. |
+
+The card asks Home Assistant, never the panel, so the API token stays on the Home Assistant server: the websocket
+commands `groundskeeper/map` and `groundskeeper/subscribe` and the imagery views under
+`/api/groundskeeper/<entry>/` need a signed-in Home Assistant user, and pass on only the map, the live feed, imagery
+tiles and the yard photo.
+
 ## Privacy
 
-The robot's serial number and location never reach Home Assistant's database. The panel names the robot by a hash of
-its serial, the summary carries no position, map or camera data, and **Download diagnostics** leaves out the token, the
-panel's address and the serial.
+The robot's serial number and location never reach Home Assistant's database unless you switch the **Device
+tracker** on. The panel names the robot by a hash of its serial and the summary carries no position, map or camera
+data. The map and live position go only to the card, over Home Assistant's websocket, and are never written to an
+entity, so the recorder keeps no history of them. The device tracker is off by default because a tracker's position
+is recorded. **Download diagnostics** leaves out the token, the panel's address, the serial and the position.
 
 ## Development
 

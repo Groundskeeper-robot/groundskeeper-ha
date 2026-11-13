@@ -38,7 +38,31 @@
       "wrong_robot": "That token belongs to a panel for a different robot."
     }
   },
+  "options": {
+    "step": {
+      "init": {
+        "title": "What to follow live",
+        "description": "The Groundskeeper card's map and follow camera use the panel's live feed. Their data goes only to the card, never into Home Assistant's history. The device tracker does keep the robot's position in history, so it is off unless you switch it on.",
+        "data": {
+          "map": "Map",
+          "follow_camera": "Follow camera",
+          "device_tracker": "Device tracker"
+        },
+        "data_description": {
+          "map": "The yard map and the robot's live position, for the card.",
+          "follow_camera": "Which Frigate camera covers the robot, as a sensor and a camera entity.",
+          "device_tracker": "The robot on Home Assistant's own map. Its position is recorded in history."
+        }
+      }
+    }
+  },
   "entity": {
+    "camera": {
+      "follow_camera": { "name": "Follow camera" }
+    },
+    "device_tracker": {
+      "robot": { "name": "Position" }
+    },
     "binary_sensor": {
       "running": { "name": "Run in progress" },
       "robot_online": { "name": "Robot online" },
@@ -61,7 +85,8 @@
       "last_run": { "name": "Last run" },
       "next_window": { "name": "Next window" },
       "start_check": { "name": "Start check" },
-      "cloud": { "name": "Cloud connection" }
+      "cloud": { "name": "Cloud connection" },
+      "follow_camera": { "name": "Follow camera" }
     }
   }
 }

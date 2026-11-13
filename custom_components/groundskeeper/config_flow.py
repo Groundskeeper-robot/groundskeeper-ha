@@ -7,7 +7,8 @@ from typing import Any
 
 import voluptuous as vol
 
-from homeassistant.config_entries import ConfigFlow, ConfigFlowResult
+from homeassistant.config_entries import ConfigEntry, ConfigFlow, ConfigFlowResult, OptionsFlow
+from homeassistant.core import callback
 from homeassistant.const import CONF_API_TOKEN, CONF_URL, CONF_VERIFY_SSL
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
@@ -19,7 +20,8 @@ from .api import (
     UnsupportedApi,
     normalize_url,
 )
-from .const import DOMAIN, LOGGER
+from .const import CONF_DEVICE_TRACKER, CONF_FOLLOW_CAMERA, CONF_MAP, DOMAIN, LOGGER
+from .coordinator import options
 
 USER_SCHEMA = vol.Schema(
     {
@@ -39,6 +41,11 @@ class GroundskeeperConfigFlow(ConfigFlow, domain=DOMAIN):
     """Config flow for Groundskeeper."""
 
     VERSION = 1
+
+    @staticmethod
+    @callback
+    def async_get_options_flow(config_entry: ConfigEntry) -> GroundskeeperOptionsFlow:
+        return GroundskeeperOptionsFlow()
 
     async def _check(self, url: str, token: str, verify_ssl: bool) -> str:
         """The panel's id for the robot (a hash of its serial, never the serial) if it answers with this token."""
@@ -110,3 +117,20 @@ class GroundskeeperConfigFlow(ConfigFlow, domain=DOMAIN):
             description_placeholders={"url": entry.data[CONF_URL]},
             errors=errors,
         )
+
+
+class GroundskeeperOptionsFlow(OptionsFlow):
+    """What the integration follows live: the map and follow camera for the card, and the optional device tracker."""
+
+    async def async_step_init(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        if user_input is not None:
+            return self.async_create_entry(data=user_input)
+        current = options(self.config_entry)
+        schema = vol.Schema(
+            {
+                vol.Required(CONF_MAP, default=current[CONF_MAP]): bool,
+                vol.Required(CONF_FOLLOW_CAMERA, default=current[CONF_FOLLOW_CAMERA]): bool,
+                vol.Required(CONF_DEVICE_TRACKER, default=current[CONF_DEVICE_TRACKER]): bool,
+            }
+        )
+        return self.async_show_form(step_id="init", data_schema=schema)

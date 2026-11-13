@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
@@ -10,9 +10,17 @@ from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .api import GroundskeeperClient, GroundskeeperError, InvalidAuth
-from .const import DOMAIN, LOGGER, ROBOT_STALE_S, UPDATE_INTERVAL
+from .const import DEFAULT_OPTIONS, DOMAIN, LOGGER, ROBOT_STALE_S, UPDATE_INTERVAL
+
+if TYPE_CHECKING:
+    from .live import GroundskeeperLive
 
 type GroundskeeperConfigEntry = ConfigEntry[GroundskeeperCoordinator]
+
+
+def options(entry: ConfigEntry) -> dict[str, bool]:
+    """The entry's options, with the defaults for any not set yet."""
+    return {**DEFAULT_OPTIONS, **{k: v for k, v in entry.options.items() if k in DEFAULT_OPTIONS}}
 
 
 def robot_online(data: dict[str, Any] | None) -> bool:
@@ -29,6 +37,8 @@ class GroundskeeperCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     def __init__(self, hass: HomeAssistant, entry: GroundskeeperConfigEntry, client: GroundskeeperClient) -> None:
         super().__init__(hass, LOGGER, config_entry=entry, name=DOMAIN, update_interval=UPDATE_INTERVAL)
         self.client = client
+        self.live: GroundskeeperLive | None = None   # the live feed, when the map, follow camera or tracker is on
+        self.platforms: list = []                      # the platforms set up for this entry (options decide)
 
     async def _async_update_data(self) -> dict[str, Any]:
         try:

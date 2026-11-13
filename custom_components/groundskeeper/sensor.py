@@ -19,8 +19,9 @@ from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.typing import StateType
 from homeassistant.util import dt as dt_util
 
-from .coordinator import GroundskeeperConfigEntry
-from .entity import GroundskeeperEntity
+from .const import CONF_FOLLOW_CAMERA
+from .coordinator import GroundskeeperConfigEntry, options
+from .entity import GroundskeeperEntity, GroundskeeperLiveEntity
 
 PARALLEL_UPDATES = 0
 
@@ -163,6 +164,8 @@ async def async_setup_entry(
 ) -> None:
     coordinator = entry.runtime_data
     async_add_entities(GroundskeeperSensor(coordinator, description) for description in SENSORS)
+    if coordinator.live and options(entry)[CONF_FOLLOW_CAMERA]:
+        async_add_entities([FollowCameraSensor(coordinator)])
 
 
 class GroundskeeperSensor(GroundskeeperEntity, SensorEntity):
@@ -181,3 +184,21 @@ class GroundskeeperSensor(GroundskeeperEntity, SensorEntity):
     def extra_state_attributes(self) -> Data | None:
         fn = self.entity_description.attrs_fn
         return fn(self.coordinator.data) if fn else None
+
+
+class FollowCameraSensor(GroundskeeperLiveEntity, SensorEntity):
+    """The Frigate camera whose coverage holds the robot, as the panel picks it (Live's follow-cam), by its Frigate
+    name. `covered` is false when no camera's coverage holds the robot and this is the first yard camera instead."""
+
+    _attr_translation_key = "follow_camera"
+
+    def __init__(self, coordinator) -> None:
+        super().__init__(coordinator, "follow_camera")
+
+    @property
+    def native_value(self) -> str | None:
+        return (self.live_state.get("follow") or {}).get("camera")
+
+    @property
+    def extra_state_attributes(self) -> Data:
+        return {"covered": bool((self.live_state.get("follow") or {}).get("covered"))}
