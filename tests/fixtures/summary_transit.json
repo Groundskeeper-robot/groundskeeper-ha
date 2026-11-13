@@ -15,7 +15,7 @@
       },
       {
         "code": "no_route",
-        "fix": "Check the robot's local broker in Settings \u2192 Robot, or sign in to the Yarbo cloud there as a fallback",
+        "fix": "Check the Yarbo cloud in Settings \u2192 Robot: sign in, or wait while it reconnects",
         "title": "The panel cannot reach the robot"
       },
       {
@@ -89,5 +89,5 @@
   "stalled": false,
   "stalled_s": 0,
   "state": "between areas",
-  "version": "0.19.5"
+  "version": "0.20.0"
 }
