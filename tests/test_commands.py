@@ -228,3 +228,14 @@ async def test_no_answer_is_not_called_not_sent(hass, aioclient_mock, entry, has
     await ws.send_json({"id": 1, "type": "groundskeeper/command", "entry_id": entry.entry_id, "cmd": "pause"})
     reply = await ws.receive_json()
     assert reply["error"]["code"] == "panel_unavailable" and "may or may not" in reply["error"]["message"]
+
+
+async def test_a_user_without_control_of_the_mower_cannot_send(hass, aioclient_mock, entry, hass_ws_client,
+                                                               hass_read_only_access_token):
+    await commands(hass, entry, aioclient_mock)
+    aioclient_mock.post(SEND_URL, json=SENT)
+    ws = await hass_ws_client(hass, hass_read_only_access_token)
+    await ws.send_json({"id": 1, "type": "groundskeeper/command", "entry_id": entry.entry_id, "cmd": "pause"})
+    reply = await ws.receive_json()
+    assert not reply["success"] and reply["error"]["code"] == "unauthorized"
+    assert posts(aioclient_mock) == []

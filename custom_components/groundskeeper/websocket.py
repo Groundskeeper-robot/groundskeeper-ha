@@ -16,8 +16,9 @@ own sign-in decides who sees the map. What these commands send is never written 
 - `groundskeeper/preview` {entry_id, cmd, plan_id?}: would the panel send this now: its checks and why not, nothing
   sent. Commands option.
 - `groundskeeper/command` {entry_id, cmd, plan_id?}: ask the panel to send one of COMMANDS (start_plan needs a
-  plan). Its answer: `sent`, and when not, `refused` and `why`. Commands option. The panel decides: its Control
-  switch and every check, held to the strict rules it keeps for an API token, with no override.
+  plan). Its answer: `sent`, and when not, `refused` and `why`. Commands option, and the caller needs Home
+  Assistant's control permission on the mower entity, as its own actions do. The panel decides: its Control switch
+  and every check, held to the strict rules it keeps for an API token, with no override.
 """
 
 from __future__ import annotations
@@ -26,9 +27,12 @@ from typing import Any
 
 import voluptuous as vol
 
+from homeassistant.auth.permissions.const import POLICY_CONTROL
 from homeassistant.components import websocket_api
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.exceptions import Unauthorized
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 
 from . import commands
@@ -226,11 +230,23 @@ async def ws_preview(hass: HomeAssistant, connection: websocket_api.ActiveConnec
     connection.send_result(msg["id"], result)
 
 
+def _may_control_mower(hass: HomeAssistant, connection, coordinator: GroundskeeperCoordinator) -> bool:
+    """The same right the mower entity's own actions need: Home Assistant's control permission on that entity, so a
+    user whose permissions leave the mower out cannot reach it through the card either."""
+    entity_id = er.async_get(hass).async_get_entity_id(
+        "lawn_mower", DOMAIN, f"{coordinator.config_entry.unique_id}_mower"
+    )
+    return entity_id is not None and connection.user.permissions.check_entity(entity_id, POLICY_CONTROL)
+
+
 @websocket_api.websocket_command({vol.Required("type"): "groundskeeper/command", **COMMAND_SCHEMA})
 @websocket_api.async_response
 async def ws_command(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]) -> None:
     coordinator = _commands_coordinator(hass, connection, msg)
     if coordinator is None:
+        return
+    if not _may_control_mower(hass, connection, coordinator):
+        connection.send_error(msg["id"], websocket_api.ERR_UNAUTHORIZED, str(Unauthorized()))
         return
     try:
         result = await commands.send(coordinator, msg["cmd"], msg.get("plan_id"))

@@ -97,8 +97,8 @@ as a fail, and there is no override. Pause, stop and dock need only the robot on
 checks (yard clear, lawn dry, battery and the rest) are for starting and resuming. A refusal shows the panel's
 reason. Every command is in the panel's audit log, from "token".
 
-Anyone who can use your Home Assistant dashboards can press these. Nothing else is sent: not the cameras or
-keep-awake, no settings, never manual driving.
+Anyone allowed to control the mower entity in Home Assistant can press these: by default every user, admin or not.
+Nothing else is sent: not the cameras or keep-awake, no settings, never manual driving.
 
 ## The Groundskeeper card
 

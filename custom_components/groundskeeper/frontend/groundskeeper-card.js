@@ -55,7 +55,7 @@ const MOVES = ["start_plan", "resume"];
 const kindOf = (name) => (MOVES.includes(name) ? "move" : name);
 // Errors that mean the integration answered and nothing was sent. Anything else (no answer from the panel, the
 // connection to Home Assistant lost) leaves it unknown whether the command went out.
-const NOT_SENT = ["commands_off", "rejected", "invalid_format", "not_found"];
+const NOT_SENT = ["commands_off", "rejected", "invalid_format", "not_found", "unauthorized"];
 const CONTROL_LABEL = { start_plan: "Start", pause: "Pause", resume: "Resume", stop: "Stop", cmd_recharge: "Dock" };
 const CONTROL_ICON = {
   start_plan: "mdi:play", pause: "mdi:pause", resume: "mdi:play-pause", stop: "mdi:stop",
