@@ -34,7 +34,9 @@ reviews:
         - Read-only: no entity, service or button may send anything to the robot. Commands come later, only through
           the panel's POST /api/control/send behind the panel's own switch and checks; flag any other way.
         - No private data in Home Assistant: the robot's serial (use robot_id()), coordinates, the API token or the
-          panel's address must not reach entity ids, unique ids, names, attributes, logs or diagnostics.
+          panel's address must not reach entity ids, unique ids, names, attributes, logs or diagnostics. The one
+          exception is the opt-in Position device tracker (device_tracker.py), off by default, which AGENTS.md
+          allows; flag coordinates anywhere else, and flag the tracker if it is ever on by default.
         - Tests are synthetic: fixtures come from the panel's demo mode; flag real dates, times, readings, serials,
           IP addresses (examples use 192.0.2.x) or coordinates in code, tests, docs or commits.
         - The summary is versioned (api): read every field defensively; a missing one is unknown, never a crash.
