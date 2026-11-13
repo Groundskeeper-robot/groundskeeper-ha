@@ -42,16 +42,16 @@
     "step": {
       "init": {
         "title": "What to follow live",
-        "description": "The Groundskeeper card's map and follow camera use the panel's live feed. The map and the robot's position go only to the card, never into Home Assistant's history. The follow camera's name is a sensor, so it is recorded. The device tracker keeps the robot's position in history, so it is off unless you switch it on.",
+        "description": "What Groundskeeper follows live from the panel. Only the device tracker records a position.",
         "data": {
           "map": "Map",
           "follow_camera": "Follow camera",
           "device_tracker": "Device tracker"
         },
         "data_description": {
-          "map": "The yard map and the robot's live position, for the card.",
-          "follow_camera": "Which Frigate camera covers the robot, as a sensor and a camera entity.",
-          "device_tracker": "The robot on Home Assistant's own map. Its position is recorded in history."
+          "map": "The yard map and live position, for the card only: never in history.",
+          "follow_camera": "Which Frigate camera covers the robot: a sensor (recorded) and a camera.",
+          "device_tracker": "The robot on Home Assistant's map. Its position is kept in history."
         }
       }
     }

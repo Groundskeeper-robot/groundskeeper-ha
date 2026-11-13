@@ -27,25 +27,13 @@ from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import async_fire_time_changed
 
-from .conftest import LIVE_STATE, POSE, URL, set_up, sse
+from .conftest import DEMO_POSES, LIVE_STATE, POSE, URL, fixture, set_up, sse
 
 SENSOR = "sensor.groundskeeper_follow_camera"
 CAMERA = "camera.groundskeeper_follow_camera"
 TRACKER = "device_tracker.groundskeeper_position"
-MAP = {
-    "geojson": {"type": "FeatureCollection", "features": []},
-    "bounds": [-1.6, 50.4, -1.4, 50.6],
-    "far": [],
-    "fetched": 1.0,
-    "versions": [{"sha": "abc123", "at": 1.0}],
-}
-IMAGERY = {
-    "yard": {"url": "/imagery/yard-abc.jpg", "bbox": [-1.6, 50.4, -1.4, 50.6]},
-    "context": None,
-    "far": [],
-    "alignment": None,
-    "ref": [50.5, -1.5],
-}
+MAP = fixture("map")  # GET /api/map and /api/imagery from the panel's demo
+IMAGERY = fixture("imagery")
 
 
 def with_options(hass, entry, **opts):
@@ -100,14 +88,15 @@ async def test_the_device_tracker_follows_the_newest_pose(hass, aioclient_mock, 
     with_options(hass, entry, **{CONF_DEVICE_TRACKER: True})
     await set_up(hass, entry, aioclient_mock, live=sse(("state", LIVE_STATE), ("pose", [POSE])))
     tracker = hass.states.get(TRACKER)
-    assert (tracker.attributes["latitude"], tracker.attributes["longitude"]) == (50.5, -1.5)
+    assert (tracker.attributes["latitude"], tracker.attributes["longitude"]) == (POSE["lat"], POSE["lon"])
     live = entry.runtime_data.live
-    live.handle("pose", [{**POSE, "t": 101.0, "lat": 50.6}])
+    newer = {**POSE, "t": POSE["t"] + 1, "lat": POSE["lat"] + 0.0001}
+    live.handle("pose", [newer])
     await hass.async_block_till_done()
-    assert hass.states.get(TRACKER).attributes["latitude"] == 50.5  # a pose alone does not write the state
+    assert hass.states.get(TRACKER).attributes["latitude"] == POSE["lat"]  # a pose alone does not write the state
     live.handle("state", LIVE_STATE)  # the next state event does, with the newer pose
     await hass.async_block_till_done()
-    assert hass.states.get(TRACKER).attributes["latitude"] == 50.6
+    assert hass.states.get(TRACKER).attributes["latitude"] == newer["lat"]
 
 
 async def test_everything_live_switched_off_opens_no_feed(hass, aioclient_mock, entry):
@@ -149,9 +138,12 @@ async def test_the_map_over_the_websocket(hass, aioclient_mock, entry, hass_ws_c
     assert msg["result"] == {
         "geojson": MAP["geojson"],
         "bounds": MAP["bounds"],
-        "fetched": 1.0,
-        "map": "abc123",
-        "yard": {"url": f"/api/groundskeeper/{entry.entry_id}/imagery/yard-abc.jpg", "bbox": IMAGERY["yard"]["bbox"]},
+        "fetched": MAP["fetched"],
+        "map": MAP["versions"][0]["sha"],
+        "yard": {
+            **{k: v for k, v in IMAGERY["yard"].items() if k != "url"},
+            "url": f"/api/groundskeeper/{entry.entry_id}/imagery/{IMAGERY['yard']['url'].removeprefix('/imagery/')}",
+        },
     }
 
 
@@ -316,7 +308,8 @@ async def test_diagnostics_leave_out_the_position(hass, aioclient_mock, entry):
     await set_up(hass, entry, aioclient_mock, live=sse(("state", LIVE_STATE), ("pose", [POSE])))
     diag = await async_get_config_entry_diagnostics(hass, entry)
     assert diag["live"]["connected"] is not None and diag["live"]["has_pose"] is True
-    assert "50.5" not in str(diag) and "-1.5" not in str(diag)
+    for spot in (POSE, LIVE_STATE["position"], *DEMO_POSES):
+        assert str(spot["lat"]) not in str(diag) and str(spot["lon"]) not in str(diag)
     assert diag["options"] == {CONF_MAP: True, CONF_FOLLOW_CAMERA: True, CONF_DEVICE_TRACKER: False}
 
 
@@ -332,3 +325,16 @@ async def test_the_options_flow(hass, aioclient_mock, entry):
     assert hass.states.get(SENSOR) is None and hass.states.get(CAMERA) is None  # gone, not "no longer provided"
     assert er.async_get(hass).async_get_entity_id("sensor", "groundskeeper", f"{entry.unique_id}_follow_camera") is None
     assert hass.states.get(TRACKER) is not None
+
+
+async def test_only_an_mjpeg_stream_passes_through(hass, aioclient_mock, entry):
+    from aiohttp.test_utils import make_mocked_request
+
+    await set_up(hass, entry, aioclient_mock)
+    aioclient_mock.get(
+        f"{URL}/api/frigate/stream/garden.mjpeg",
+        content=b"<script>alert(1)</script>",
+        headers={"Content-Type": "text/html"},
+    )
+    camera = hass.data["camera"].get_entity(CAMERA)
+    assert await camera.handle_async_mjpeg_stream(make_mocked_request("GET", "/")) is None

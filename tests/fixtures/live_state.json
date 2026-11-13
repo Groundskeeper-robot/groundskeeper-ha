@@ -1,0 +1,20 @@
+{
+  "activity": "mowing",
+  "api": 1,
+  "follow": {
+    "camera": null,
+    "covered": false
+  },
+  "map": "f08c8d38f78ea5dc",
+  "position": {
+    "heading": 300.0,
+    "lat": 45.60110624326267,
+    "lon": -122.68172578775253,
+    "t": 1794546344.044
+  },
+  "run": {
+    "distance_m": 2128.7,
+    "id": 4
+  },
+  "state": "mowing"
+}

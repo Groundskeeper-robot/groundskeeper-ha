@@ -1,0 +1,68 @@
+{
+  "alignment": {
+    "east_m": 0.0,
+    "north_m": 0.0,
+    "opacity": 1.0,
+    "rotate_deg": 0.0,
+    "scale": 1.0
+  },
+  "context": {
+    "source": {
+      "max_zoom": 21,
+      "min_zoom": 12,
+      "radius_m": 5000,
+      "version": "7b8401de13"
+    },
+    "world": {
+      "attribution": "EOxCloudless 2025 by EOX IT Services GmbH (contains modified Copernicus Sentinel data 2025)",
+      "max_zoom": 12,
+      "name": "Sentinel-2 cloudless 2025 (EOX)",
+      "terms": "Non-commercial use only (CC BY-NC-SA 4.0); commercial use needs an EOX licence"
+    }
+  },
+  "far": [],
+  "ref": [
+    45.6013,
+    -122.6818
+  ],
+  "yard": {
+    "attribution": "Imagery: City of Portland, Metro",
+    "bbox": [
+      -122.68337925698437,
+      45.60044660438376,
+      -122.6805160512668,
+      45.602126446281
+    ],
+    "coordinates": [
+      [
+        -122.68337925698437,
+        45.602126446281
+      ],
+      [
+        -122.6805160512668,
+        45.602126446281
+      ],
+      [
+        -122.6805160512668,
+        45.60044660438376
+      ],
+      [
+        -122.68337925698437,
+        45.60044660438376
+      ]
+    ],
+    "source": {
+      "attribution": "Imagery: City of Portland, Metro",
+      "fetched": 1794545929.2607496,
+      "id": "or_portland_2025",
+      "m_per_px": 0.1524,
+      "name": "PortlandMaps summer 2025 aerial photos (15 cm)",
+      "native_m": 0.1524,
+      "size": [
+        1463,
+        1227
+      ]
+    },
+    "url": "/imagery/yard-d1c941554af8.jpg"
+  }
+}
