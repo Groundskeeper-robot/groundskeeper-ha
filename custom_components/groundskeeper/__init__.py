@@ -6,6 +6,9 @@ Groundskeeper card (the map and the follow camera, Options), through the panel's
 
 from __future__ import annotations
 
+import hashlib
+from pathlib import Path
+
 from homeassistant.const import CONF_API_TOKEN, CONF_URL, CONF_VERIFY_SSL, Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import config_validation as cv, entity_registry as er
@@ -14,7 +17,7 @@ from homeassistant.helpers.typing import ConfigType
 
 from . import views, websocket
 from .api import GroundskeeperClient
-from .const import CONF_DEVICE_TRACKER, CONF_FOLLOW_CAMERA, CONF_MAP, DOMAIN
+from .const import CARD_URL, CONF_DEVICE_TRACKER, CONF_FOLLOW_CAMERA, CONF_MAP, DOMAIN, LOGGER
 from .coordinator import GroundskeeperConfigEntry, GroundskeeperCoordinator, options
 from .live import GroundskeeperLive
 
@@ -56,7 +59,24 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     """The card's websocket commands and file view, once for every entry."""
     websocket.async_register(hass)
     views.async_register(hass)
+    await _register_card(hass)
     return True
+
+
+async def _register_card(hass: HomeAssistant) -> None:
+    """Serve the Groundskeeper card and load it on every dashboard, so there is no resource to add by hand. A hash
+    of the file in its address makes browsers fetch it again whenever it changes, version bump or not."""
+    from homeassistant.components.http import StaticPathConfig
+
+    path = Path(__file__).parent / "frontend" / "groundskeeper-card.js"
+    await hass.http.async_register_static_paths([StaticPathConfig(CARD_URL, str(path), cache_headers=False)])
+    if "frontend" not in hass.config.components:
+        LOGGER.debug("No frontend: the Groundskeeper card is served but not added to dashboards")
+        return
+    from homeassistant.components.frontend import add_extra_js_url
+
+    digest = await hass.async_add_executor_job(lambda: hashlib.sha256(path.read_bytes()).hexdigest()[:12])
+    add_extra_js_url(hass, f"{CARD_URL}?v={digest}")
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: GroundskeeperConfigEntry) -> bool:

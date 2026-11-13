@@ -12,6 +12,7 @@ import pytest
 
 from custom_components.groundskeeper.api import parse_sse
 from custom_components.groundskeeper.const import (
+    CARD_URL,
     CONF_DEVICE_TRACKER,
     CONF_FOLLOW_CAMERA,
     CONF_MAP,
@@ -331,3 +332,54 @@ async def test_the_options_flow(hass, aioclient_mock, entry):
     assert hass.states.get(SENSOR) is None and hass.states.get(CAMERA) is None  # gone, not "no longer provided"
     assert er.async_get(hass).async_get_entity_id("sensor", "groundskeeper", f"{entry.unique_id}_follow_camera") is None
     assert hass.states.get(TRACKER) is not None
+
+
+async def test_a_runs_track_over_the_websocket(hass, aioclient_mock, entry, hass_ws_client):
+    await set_up(hass, entry, aioclient_mock)
+    fields = ["ts", "lon", "lat", "x", "y", "rtk_status", "sats"]
+    rows = [[1.0, -1.5, 50.5, 0, 0, 4, 30], [2.0, -1.5001, 50.5001, 1, 1, 5, 29], [3.0, None, None, 0, 0, 0, 0]]
+    aioclient_mock.get(f"{URL}/api/runs/12/points", json={"fields": fields, "rows": rows, "relabel": False})
+    ws = await hass_ws_client(hass)
+    await ws.send_json({"id": 1, "type": "groundskeeper/track", "entry_id": entry.entry_id, "run_id": 12})
+    msg = await ws.receive_json()
+    assert msg["success"], msg
+    assert msg["result"] == {"run_id": 12, "points": [[1.0, -1.5, 50.5, 4], [2.0, -1.5001, 50.5001, 5]]}
+
+
+async def test_only_what_is_new_of_a_track(hass, aioclient_mock, entry, hass_ws_client):
+    await set_up(hass, entry, aioclient_mock)
+    aioclient_mock.get(f"{URL}/api/runs/12/points?since=2.0", json={"fields": ["ts", "lon", "lat"], "rows": []})
+    ws = await hass_ws_client(hass)
+    await ws.send_json({"id": 1, "type": "groundskeeper/track", "entry_id": entry.entry_id, "run_id": 12, "since": 2})
+    msg = await ws.receive_json()
+    assert msg["success"] and msg["result"]["points"] == []
+    assert str(aioclient_mock.mock_calls[-1][1]).endswith("/api/runs/12/points?since=2.0")
+
+
+async def test_no_track_with_the_map_switched_off(hass, aioclient_mock, entry, hass_ws_client):
+    with_options(hass, entry, **{CONF_MAP: False})
+    await set_up(hass, entry, aioclient_mock)
+    ws = await hass_ws_client(hass)
+    await ws.send_json({"id": 1, "type": "groundskeeper/track", "entry_id": entry.entry_id, "run_id": 12})
+    msg = await ws.receive_json()
+    assert not msg["success"] and msg["error"]["code"] == "map_off"
+
+
+async def test_the_card_is_served(hass, aioclient_mock, entry, hass_client_no_auth):
+    await set_up(hass, entry, aioclient_mock)
+    r = await (await hass_client_no_auth()).get(CARD_URL)
+    assert r.status == 200
+    text = await r.text()
+    assert 'customElements.define("groundskeeper-card"' in text
+    assert "innerHTML" not in text  # text from the panel or HA is always set as text
+
+
+def test_the_card_says_the_integrations_version():
+    import json
+    import re
+    from pathlib import Path
+
+    root = Path(__file__).parent.parent / "custom_components" / "groundskeeper"
+    card = (root / "frontend" / "groundskeeper-card.js").read_text(encoding="utf-8")
+    version = json.loads((root / "manifest.json").read_text(encoding="utf-8"))["version"]
+    assert re.search(r'const CARD_VERSION = "([^"]+)"', card).group(1) == version

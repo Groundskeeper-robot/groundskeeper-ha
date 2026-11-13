@@ -126,6 +126,29 @@ class GroundskeeperClient:
             "yard": imagery.get("yard") if isinstance(imagery, dict) else None,
         }
 
+    async def run_track(self, run_id: int, since: float = 0) -> list[list[Any]]:
+        """A run's position samples after `since`, as [time, lon, lat, rtk status] (4 fixed, 5 float, 1 single)."""
+        path = f"/api/runs/{int(run_id)}/points"
+        if since:
+            path += f"?since={float(since)}"
+        data = await self._get_json(path)
+        if not isinstance(data, dict) or not isinstance(data.get("fields"), list):
+            raise CannotConnect("the run's points are not in the expected shape")
+        fields = data["fields"]
+        try:
+            ix = [fields.index(k) for k in ("ts", "lon", "lat")]
+        except ValueError as err:
+            raise CannotConnect("the run's points have no position") from err
+        rtk = fields.index("rtk_status") if "rtk_status" in fields else None
+        out = []
+        for row in data.get("rows") or []:
+            if not isinstance(row, list) or len(row) < len(fields):
+                continue
+            t, lon, lat = (row[i] for i in ix)
+            if isinstance(lon, (int, float)) and isinstance(lat, (int, float)):
+                out.append([t, lon, lat, row[rtk] if rtk is not None else None])
+        return out
+
     async def live(self) -> AsyncIterator[tuple[str, Any]]:
         """The panel's live feed as (event, data) pairs until it ends. Raises a GroundskeeperError on failure,
         UnsupportedApi when its state events are a newer shape."""

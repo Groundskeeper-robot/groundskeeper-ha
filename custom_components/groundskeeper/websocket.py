@@ -6,6 +6,8 @@ own sign-in decides who sees the map. What these commands send is never written 
 
 - `groundskeeper/map` {entry_id}: the yard map (GeoJSON, bounds, map version, the yard photo's details with its
   address on this integration's imagery view). Map option.
+- `groundskeeper/track` {entry_id, run_id, since?}: a run's track as [time, lon, lat, rtk status] samples after
+  `since` (the card asks for the current run, then only what is new). Map option.
 - `groundskeeper/subscribe` {entry_id}: the live feed. First a `snapshot` event (the last state, the newest pose,
   whether the feed is connected), then each `state`, `pose`, `connection` and `stale` event as it comes. A `closed`
   event ends it: the entry unloaded or reloaded (an option changed), and the card subscribes again if it wants.
@@ -32,6 +34,7 @@ from .coordinator import GroundskeeperCoordinator, options
 def async_register(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_map)
     websocket_api.async_register_command(hass, ws_subscribe)
+    websocket_api.async_register_command(hass, ws_track)
 
 
 def _coordinator(hass: HomeAssistant, connection, msg: dict) -> GroundskeeperCoordinator | None:
@@ -78,6 +81,32 @@ async def ws_map(hass: HomeAssistant, connection: websocket_api.ActiveConnection
         connection.send_error(msg["id"], "panel_unavailable", f"The panel did not give its map ({type(err).__name__})")
         return
     connection.send_result(msg["id"], {**data, "yard": yard_for_card(data.get("yard"), msg["entry_id"])})
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "groundskeeper/track",
+        vol.Required("entry_id"): str,
+        vol.Required("run_id"): vol.All(int, vol.Range(min=0)),
+        vol.Optional("since", default=0): vol.Coerce(float),
+    }
+)
+@websocket_api.async_response
+async def ws_track(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]) -> None:
+    coordinator = _coordinator(hass, connection, msg)
+    if coordinator is None:
+        return
+    if not options(coordinator.config_entry)[CONF_MAP]:
+        connection.send_error(msg["id"], "map_off", "The map is switched off in the integration's options")
+        return
+    try:
+        points = await coordinator.client.run_track(msg["run_id"], msg["since"])
+    except GroundskeeperError as err:
+        connection.send_error(
+            msg["id"], "panel_unavailable", f"The panel did not give the track ({type(err).__name__})"
+        )
+        return
+    connection.send_result(msg["id"], {"run_id": msg["run_id"], "points": points})
 
 
 @websocket_api.websocket_command({vol.Required("type"): "groundskeeper/subscribe", vol.Required("entry_id"): str})
