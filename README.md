@@ -71,7 +71,7 @@ Groundskeeper → Configure** chooses what it follows:
 
 | Option | Default | What you get |
 |---|---|---|
-| Map | On | The yard map and the robot's live position for the Groundskeeper card (coming next). Nothing in an entity. |
+| Map | On | The yard map and the robot's live position for the Groundskeeper card. Nothing in an entity. |
 | Follow camera | On | **Follow camera** sensor: the Frigate camera whose coverage holds the robot, as the panel's Live picks it (`covered` is off when none does and it's the first yard camera). **Follow camera** camera entity: that camera's picture through the panel. If Frigate is already in Home Assistant, its own camera entity for the named camera shows the same picture directly. |
 | Device tracker | **Off** | **Position**: the robot on Home Assistant's own map, updated every 5 seconds while the feed runs. |
 
@@ -79,6 +79,37 @@ The card asks Home Assistant, never the panel, so the API token stays on the Hom
 commands `groundskeeper/map` and `groundskeeper/subscribe` and the imagery views under
 `/api/groundskeeper/<entry>/` need a signed-in Home Assistant user, and pass on only the map, the live feed, imagery
 tiles and the yard photo.
+
+## The Groundskeeper card
+
+The integration brings its own dashboard card; there is no resource to add. Edit a dashboard, **Add card**, search
+for **Groundskeeper**, or in YAML:
+
+```yaml
+type: custom:groundskeeper-card
+```
+
+It shows:
+
+- **Status:** the mower's state, battery, positioning and the start check. Tap one for its details.
+- **Map:** the yard photo with your areas, no-go zones, no-vision zones, pathways and the dock, the current run's track
+  coloured by RTK fix (green fixed, amber float, orange single), and the robot with its heading, moving live. The
+  crosshair button follows the robot. Needs the **Map** option.
+- **Follow camera:** the Frigate camera that covers the robot, switching as the robot moves. If Frigate is in Home
+  Assistant too, the card uses Frigate's own camera entity for that camera; otherwise the integration's Follow camera
+  (through the panel). Needs the **Follow camera** option and Frigate set up in the panel.
+
+Options (all in the visual editor):
+
+| Option | Default | |
+|---|---|---|
+| `entry_id` | the first robot | Which Groundskeeper entry, with more than one robot |
+| `title` | none | A heading |
+| `show_status`, `show_map`, `show_camera` | `true` | Which parts to show |
+| `camera` | `auto` | `auto`: Frigate's own entity when there is one; `integration`: always through the panel |
+| `map_height` | `320` | The map's height in pixels |
+
+The card reads only: nothing on it sends anything to the robot. It talks to Home Assistant, never to the panel.
 
 ## Privacy
 

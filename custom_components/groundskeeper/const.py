@@ -29,6 +29,9 @@ LIVE_STALE_S = 60
 # Waits between reconnects: doubling from the first to the last; a panel without the stream waits the longest.
 LIVE_RETRY_S = (2, 300)
 
+# The Groundskeeper card, served by the integration and added to every dashboard's resources.
+CARD_URL = "/groundskeeper_card/groundskeeper-card.js"
+
 # Options (Settings → Devices & services → Groundskeeper → Configure).
 CONF_MAP = "map"
 CONF_FOLLOW_CAMERA = "follow_camera"
