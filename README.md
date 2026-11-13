@@ -75,7 +75,7 @@ Groundskeeper → Configure** chooses what it follows:
 | Map | On | The yard map and the robot's live position for the Groundskeeper card. Nothing in an entity. |
 | Follow camera | On | **Follow camera** sensor: the Frigate camera whose coverage holds the robot, as the panel's Live picks it (`covered` is off when none does and it's the first yard camera). **Follow camera** camera entity: that camera's picture through the panel. If Frigate is already in Home Assistant, its own camera entity for the named camera shows the same picture directly. |
 | Device tracker | **Off** | **Position**: the robot on Home Assistant's own map, updated every 5 seconds while the feed runs. |
-| Commands | **Off** | Start, pause, resume, stop and dock from Home Assistant, through the panel. See [Commands](#commands). |
+| Commands | **Off** | Start, pause, resume, stop and dock, through the panel. See [Commands](#commands). |
 
 The card asks Home Assistant, never the panel, so the API token stays on the Home Assistant server: the websocket
 commands `groundskeeper/map` and `groundskeeper/subscribe` and the imagery views under
@@ -93,15 +93,18 @@ Off until you switch **Commands** on under **Configure**. Then:
 
 Home Assistant only asks. The panel sends a command only with its **Control** switch on (Settings → Safety in the
 panel) and every check passing, and it holds an API token to its strictest reading: a check it can't answer counts
-as a fail, and there is no override. Pause, stop and dock need only the robot online and reachable; the start checks
-(yard clear, lawn dry, battery and the rest) are for starting and resuming. A refusal shows the panel's reason. Every command is in the panel's audit log, from "token".
+as a fail, and there is no override. Pause, stop and dock need only the robot online and reachable; the start
+checks (yard clear, lawn dry, battery and the rest) are for starting and resuming. A refusal shows the panel's
+reason. Every command is in the panel's audit log, from "token".
 
 Anyone who can use your Home Assistant dashboards can press these. Nothing else is sent: not the cameras or
 keep-awake, no settings, never manual driving.
 
 ## The Groundskeeper card
 
-![The Groundskeeper card: status chips, controls, and the yard map with the robot on it (the panel's demo yard)](https://raw.githubusercontent.com/Groundskeeper-robot/groundskeeper-ha/main/docs/card.png)
+![The Groundskeeper card: status chips, controls and the yard map, in the panel's demo yard][card-shot]
+
+[card-shot]: https://raw.githubusercontent.com/Groundskeeper-robot/groundskeeper-ha/main/docs/card.png
 
 The integration brings its own dashboard card; there is no resource to add. Edit a dashboard, **Add card**, search
 for **Groundskeeper**, or in YAML:
@@ -129,7 +132,7 @@ Options (all in the visual editor):
 |---|---|---|
 | `entry_id` | the first robot | Which Groundskeeper entry, with more than one robot |
 | `title` | none | A heading |
-| `show_status`, `show_controls`, `show_map`, `show_camera` | `true` | Which parts to show (controls only with Commands on) |
+| `show_status`, `show_controls`, `show_map`, `show_camera` | `true` | Which parts to show (controls: Commands on) |
 | `camera` | `auto` | `auto`: Frigate's own entity when there is one; `integration`: always through the panel |
 | `map_height` | `320` | The map's height in pixels |
 

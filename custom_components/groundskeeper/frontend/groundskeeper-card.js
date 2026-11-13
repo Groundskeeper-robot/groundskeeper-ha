@@ -49,10 +49,13 @@ const CONTROLS = {
   error: ["stop", "cmd_recharge"],
 };
 const CONTROL_ALL = ["start_plan", "pause", "resume", "stop", "cmd_recharge"];
-// Commands that set the robot moving, and the ones that stop it. A start or resume still waiting for the panel's
-// answer never holds back a Pause, Stop or Dock: each kind waits only for its own.
+// What a command waits on while its request is out. Start and Resume (they set the robot moving) wait on each other;
+// Pause, Stop and Dock each wait only on themselves, so nothing ever holds back a Stop.
 const MOVES = ["start_plan", "resume"];
-const kindOf = (name) => (MOVES.includes(name) ? "move" : "stop");
+const kindOf = (name) => (MOVES.includes(name) ? "move" : name);
+// Errors that mean the integration answered and nothing was sent. Anything else (no answer from the panel, the
+// connection to Home Assistant lost) leaves it unknown whether the command went out.
+const NOT_SENT = ["commands_off", "rejected", "invalid_format", "not_found"];
 const CONTROL_LABEL = { start_plan: "Start", pause: "Pause", resume: "Resume", stop: "Stop", cmd_recharge: "Dock" };
 const CONTROL_ICON = {
   start_plan: "mdi:play", pause: "mdi:pause", resume: "mdi:play-pause", stop: "mdi:stop",
@@ -129,8 +132,7 @@ class GroundskeeperCard extends HTMLElement {
     this._notes = {};
     this._chips = {};
     this._cmd = {
-      on: null, plans: [], plan: null, tried: 0, pending: { move: false, stop: false }, open: false, preview: null,
-      asked: 0,
+      on: null, plans: [], plan: null, tried: 0, pending: {}, open: false, preview: null, asked: 0,
     };
   }
 
@@ -262,8 +264,7 @@ class GroundskeeperCard extends HTMLElement {
     this._trail = [];
     this._drawn = null;
     this._cmd = {
-      on: null, plans: [], plan: null, tried: 0, pending: { move: false, stop: false }, open: false, preview: null,
-      asked: 0,
+      on: null, plans: [], plan: null, tried: 0, pending: {}, open: false, preview: null, asked: 0,
     };
   }
 
@@ -593,7 +594,7 @@ class GroundskeeperCard extends HTMLElement {
     const wrap = this._controlsEl;
     if (!wrap || !this._hass) return;
     const cmd = this._cmd;
-    if (cmd.on !== true || Date.now() - cmd.tried >= 5 * PLANS_RETRY_MS) this._loadPlans();   // plans change rarely
+    if (cmd.on !== true || Date.now() - cmd.tried >= 5 * PLANS_RETRY_MS) this._loadPlans();  // plans rarely change
     wrap.hidden = cmd.on !== true;
     if (cmd.on !== true) return;
     const c = this._ctl;
@@ -604,7 +605,7 @@ class GroundskeeperCard extends HTMLElement {
     for (const name of CONTROL_ALL) {
       const b = c.buttons[name];
       b.hidden = !shown.includes(name);
-      b.disabled = cmd.pending[kindOf(name)];
+      b.disabled = Boolean(cmd.pending[kindOf(name)]);
       const label = name === "resume" && c.armed === "resume" ? "Tap again to resume" : CONTROL_LABEL[name];
       if (b.lastChild.textContent !== label) b.lastChild.textContent = label;
     }
@@ -685,7 +686,7 @@ class GroundskeeperCard extends HTMLElement {
     c.verdict.textContent = verdict;
     c.verdict.classList.toggle("ok", ok);
     c.checks.replaceChildren(...items.map((t) => el("li", { text: t })));
-    c.go.disabled = !ok || cmd.pending.move;
+    c.go.disabled = !ok || Boolean(cmd.pending.move);
   }
 
   _press(name) {
@@ -761,11 +762,11 @@ class GroundskeeperCard extends HTMLElement {
         : `Not sent: ${res?.why_not || "the panel did not send it"}.`;
     } catch (err) {
       off = err?.code === "commands_off";
-      // No answer (a timeout, a dropped connection): the panel may have sent it, so never say "not sent" here.
-      text = err?.code === "panel_unavailable"
-        ? `No answer from the panel: ${CONTROL_LABEL[name]} may or may not have gone out. `
-          + "Check what the robot is doing before trying again."
-        : `Not sent: ${err?.message || "the panel could not be asked"}.`;
+      // "Not sent" only when the integration said so. No answer from the panel, or the connection to Home
+      // Assistant lost mid-request: it may have gone out, so say that and never invite a blind retry.
+      text = NOT_SENT.includes(err?.code) ? `Not sent: ${err?.message || "the integration turned it down"}.`
+        : `No answer: ${CONTROL_LABEL[name]} may or may not have gone out. `
+          + "Check what the robot is doing before trying again.";
     }
     if (this._cmd !== cmd) return;
     cmd.pending[kind] = false;

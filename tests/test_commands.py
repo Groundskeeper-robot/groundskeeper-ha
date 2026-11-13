@@ -155,8 +155,8 @@ async def test_commands_off_the_card_is_told_so(hass, aioclient_mock, entry, has
     await set_up(hass, entry, aioclient_mock)
     ws = await hass_ws_client(hass)
     for i, kind in enumerate(("plans", "preview", "command"), start=1):
-        await ws.send_json({"id": i, "type": f"groundskeeper/{kind}", "entry_id": entry.entry_id, "cmd": "pause"}
-                           if kind != "plans" else {"id": i, "type": "groundskeeper/plans", "entry_id": entry.entry_id})
+        msg = {"id": i, "type": f"groundskeeper/{kind}", "entry_id": entry.entry_id}
+        await ws.send_json(msg if kind == "plans" else {**msg, "cmd": "pause"})
         reply = await ws.receive_json()
         assert not reply["success"] and reply["error"]["code"] == "commands_off"
     assert posts(aioclient_mock) == []
