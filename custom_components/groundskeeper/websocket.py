@@ -129,7 +129,8 @@ async def ws_ground(hass: HomeAssistant, connection: websocket_api.ActiveConnect
         {
             **ground,
             "tiles": f"{base}/ground/{{z}}/{{x}}/{{y}}.png?v={ground['version']}",
-            "vendor": {name: f"{base}/vendor/{name}" for name in VENDOR},
+            # The pin in the address: a release with new libraries is never served an old one from a browser's cache.
+            "vendor": {name: f"{base}/vendor/{name}?h={pin[:12]}" for name, (_type, pin) in VENDOR.items()},
         },
     )
 

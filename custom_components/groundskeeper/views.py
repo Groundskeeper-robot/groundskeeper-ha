@@ -14,6 +14,7 @@ them need the Map option.
 from __future__ import annotations
 
 from http import HTTPStatus
+import re
 
 from aiohttp import web
 
@@ -27,6 +28,7 @@ from .const import CONF_MAP, DOMAIN, VENDOR
 from .coordinator import options
 
 MAX_ZOOM = 24
+TILE_NUMBER = re.compile(r"[0-9]{1,8}")
 # What a tile or the yard photo may be served as. Anything else the panel says is replaced: a compromised panel (or a
 # cleartext connection someone sits on) must not get an HTML page served from Home Assistant's own address.
 IMAGE_TYPES = ("image/jpeg", "image/png", "image/webp")
@@ -76,7 +78,7 @@ async def _pass(hass: HomeAssistant, entry_id: str, path: str, cache: str) -> we
 
 def _tile(z: str, x: str, y: str) -> tuple[int, int, int] | None:
     """A tile address on the world's grid, or None."""
-    if not (z.isdigit() and x.isdigit() and y.isdigit()):
+    if not all(TILE_NUMBER.fullmatch(n) for n in (z, x, y)):
         return None
     zi, xi, yi = int(z), int(x), int(y)
     if zi > MAX_ZOOM or xi >= 2**zi or yi >= 2**zi:
@@ -130,7 +132,7 @@ class GroundTileView(HomeAssistantView):
             status, body, keep = await client.ground_tile(*tile, version)
         except GroundskeeperError:
             return web.Response(status=HTTPStatus.BAD_GATEWAY)
-        if status != HTTPStatus.OK:
+        if status != HTTPStatus.OK or _client(request.app[KEY_HASS], entry_id) is None:  # or the map switched off
             return web.Response(status=HTTPStatus.NOT_FOUND)
         return web.Response(
             body=body,
@@ -166,6 +168,8 @@ class VendorView(HomeAssistantView):
             except GroundskeeperError:
                 return web.Response(status=HTTPStatus.BAD_GATEWAY)
             self._checked[name] = body
+            if _client(request.app[KEY_HASS], entry_id) is None:  # the map was switched off meanwhile
+                return web.Response(status=HTTPStatus.NOT_FOUND)
         return web.Response(
             body=body,
             content_type=VENDOR[name][0],

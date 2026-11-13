@@ -54,6 +54,9 @@ VENDOR = {
     "three.module.min.js": ("text/javascript", "08fd7545d13d2c7fb65ab691530a802dafefd638596501854f267d0fb13c39e7"),
 }
 VENDOR_MAX_BYTES = 4_000_000
+# The most any file for the card may be (a sharp yard photo is the largest: up to 4096 px a side), and a ground tile.
+FILE_MAX_BYTES = 32_000_000
+GROUND_TILE_MAX_BYTES = 2_000_000
 
 # Commands (the Commands option, off by default). They go only through the panel's POST /api/control/send, which
 # sends them only with its Control switch on and every check passing, under the strict rules it keeps for an API token

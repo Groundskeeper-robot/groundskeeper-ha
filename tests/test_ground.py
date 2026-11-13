@@ -36,7 +36,7 @@ async def test_the_ground_over_the_websocket(hass, aioclient_mock, entry, hass_w
     assert out["version"] == V and out["bounds"] == GROUND["bounds"] and out["encoding"] == "terrarium"
     assert (out["minzoom"], out["maxzoom"]) == (GROUND["minzoom"], GROUND["maxzoom"])
     assert out["tiles"] == f"{base}/ground/{{z}}/{{x}}/{{y}}.png?v={V}"
-    assert out["vendor"] == {name: f"{base}/vendor/{name}" for name in VENDOR}
+    assert out["vendor"] == {name: f"{base}/vendor/{name}?h={VENDOR[name][1][:12]}" for name in VENDOR}
     assert "robot_share" not in out  # only what the card draws with
 
 
@@ -185,3 +185,49 @@ def test_the_pins_are_the_panels_libraries():
     assert set(VENDOR) == {"maplibre-gl.js", "maplibre-gl.css", "three.module.min.js"}
     for ctype, digest in VENDOR.values():
         assert ctype in ("text/javascript", "text/css") and len(bytes.fromhex(digest)) == 32
+
+
+async def test_a_large_yard_photo_still_passes(hass, aioclient_mock, entry, hass_client):
+    """The libraries' limit is theirs alone: a sharp yard photo is far bigger."""
+    await set_up(hass, entry, aioclient_mock)
+    photo = b"\xff\xd8" + b"j" * 6_000_000
+    aioclient_mock.get(f"{URL}/imagery/yard.jpg", content=photo, headers={"Content-Type": "image/jpeg"})
+    r = await (await hass_client()).get(f"/api/groundskeeper/{entry.entry_id}/imagery/yard.jpg")
+    assert r.status == 200 and len(await r.read()) == len(photo)
+
+
+@pytest.mark.parametrize(
+    ("query", "headers"),
+    [
+        ("", {"Cache-Control": "max-age=86400"}),  # no version asked: nothing to keep it under
+        (f"?v={V}", {}),  # the panel did not say it may be kept
+    ],
+)
+async def test_a_tile_is_kept_only_when_both_sides_say_so(hass, aioclient_mock, entry, hass_client, query, headers):
+    await set_up(hass, entry, aioclient_mock)
+    aioclient_mock.get(f"{URL}{GROUND_PATH}/16/1/1.png", content=TILE, headers={"Content-Type": "image/png", **headers})
+    r = await (await hass_client()).get(f"/api/groundskeeper/{entry.entry_id}/ground/16/1/1.png{query}")
+    assert r.status == 200 and r.headers["Cache-Control"] == "private, no-store"
+
+
+@pytest.mark.parametrize("status", [HTTPStatus.BAD_REQUEST, HTTPStatus.SERVICE_UNAVAILABLE])
+async def test_a_tile_the_panel_does_not_give_is_not_found(hass, aioclient_mock, entry, hass_client, status):
+    await set_up(hass, entry, aioclient_mock)
+    aioclient_mock.get(f"{URL}{GROUND_PATH}/16/1/1.png", params={"v": V}, status=status)
+    r = await (await hass_client()).get(f"/api/groundskeeper/{entry.entry_id}/ground/16/1/1.png?v={V}")
+    assert r.status == 404
+
+
+async def test_a_library_the_panel_does_not_have_is_refused(hass, aioclient_mock, entry, hass_client):
+    await set_up(hass, entry, aioclient_mock)
+    aioclient_mock.get(f"{URL}/vendor/maplibre-gl.js", status=HTTPStatus.NOT_FOUND)
+    r = await (await hass_client()).get(f"/api/groundskeeper/{entry.entry_id}/vendor/maplibre-gl.js")
+    assert r.status == HTTPStatus.BAD_GATEWAY
+
+
+@pytest.mark.parametrize("number", ["\u00b2", "1" * 9])
+async def test_a_tile_number_is_plain_digits(hass, aioclient_mock, entry, hass_client, number):
+    await set_up(hass, entry, aioclient_mock)
+    calls = len(aioclient_mock.mock_calls)
+    r = await (await hass_client()).get(f"/api/groundskeeper/{entry.entry_id}/ground/16/1/{number}.png")
+    assert r.status in (400, 404) and len(aioclient_mock.mock_calls) == calls

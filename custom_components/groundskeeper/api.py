@@ -21,7 +21,9 @@ from .const import (
     COMMANDS,
     CONTROL_PREVIEW_PATH,
     CONTROL_SEND_PATH,
+    FILE_MAX_BYTES,
     GROUND_PATH,
+    GROUND_TILE_MAX_BYTES,
     GROUND_TIMEOUT_S,
     IMAGERY_PATH,
     LIVE_API,
@@ -303,10 +305,12 @@ class GroundskeeperClient:
         except (aiohttp.ClientError, TimeoutError) as err:
             raise CannotConnect(str(err) or type(err).__name__) from err
 
-    async def file(self, path: str, timeout: float = REQUEST_TIMEOUT_S) -> tuple[int, bytes, str | None, str | None]:
+    async def file(
+        self, path: str, timeout: float = REQUEST_TIMEOUT_S, max_bytes: int = FILE_MAX_BYTES
+    ) -> tuple[int, bytes, str | None, str | None]:
         """A tile, the yard photo or a library for the card, by its panel path (checked by the caller): status, body,
         content type and cache header. Raises CannotConnect when the panel does not answer, or sends more than
-        VENDOR_MAX_BYTES."""
+        `max_bytes`."""
         try:
             async with self._session.get(
                 f"{self.url}{path}",
@@ -314,10 +318,13 @@ class GroundskeeperClient:
                 timeout=aiohttp.ClientTimeout(total=timeout),
                 allow_redirects=False,  # only the checked path: a redirect must not carry the token elsewhere
             ) as resp:
+                length = resp.headers.get("Content-Length", "")
+                if length.isascii() and length.isdigit() and int(length) > max_bytes:
+                    raise CannotConnect("the panel sent more than a file for the card can be")
                 chunks, size = [], 0
                 async for chunk in resp.content.iter_chunked(65536):
                     size += len(chunk)
-                    if size > VENDOR_MAX_BYTES:
+                    if size > max_bytes:
                         raise CannotConnect("the panel sent more than a file for the card can be")
                     chunks.append(chunk)
                 body = b"".join(chunks)
@@ -342,15 +349,16 @@ class GroundskeeperClient:
             if not GROUND_VERSION.fullmatch(version):
                 raise ValueError(version)
             path += f"?v={version}"
-        status, body, _ctype, cache = await self.file(path, timeout=GROUND_TIMEOUT_S)
-        return status, body, "no-store" not in (cache or "").lower()
+        status, body, _ctype, cache = await self.file(path, timeout=GROUND_TIMEOUT_S, max_bytes=GROUND_TILE_MAX_BYTES)
+        cache = (cache or "").lower()
+        return status, body, "max-age" in cache and "no-store" not in cache  # kept only when the panel says so
 
     async def vendor(self, name: str) -> bytes:
         """One of the panel's libraries for the card's 3D view, only with the exact contents VENDOR names. Raises
         ValueError for a name not in VENDOR, CannotConnect for anything but those contents."""
         if name not in VENDOR:
             raise ValueError(name)
-        status, body, _ctype, _cache = await self.file(f"/vendor/{name}")
+        status, body, _ctype, _cache = await self.file(f"/vendor/{name}", max_bytes=VENDOR_MAX_BYTES)
         if status != 200:
             raise CannotConnect(f"the panel answered {status} for {name}")
         if hashlib.sha256(body).hexdigest() != VENDOR[name][1]:
