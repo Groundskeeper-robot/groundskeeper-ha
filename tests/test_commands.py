@@ -239,3 +239,13 @@ async def test_a_user_without_control_of_the_mower_cannot_send(hass, aioclient_m
     reply = await ws.receive_json()
     assert not reply["success"] and reply["error"]["code"] == "unauthorized"
     assert posts(aioclient_mock) == []
+
+
+@pytest.mark.parametrize("plans", [True, 1, "Mow All", None, {"id": 1}])
+async def test_a_plan_list_of_the_wrong_shape_is_empty(hass, aioclient_mock, entry, hass_ws_client, plans):
+    await commands(hass, entry, aioclient_mock)
+    aioclient_mock.get(f"{URL}{PLANS_PATH}", json={**fixture("control_plans"), "plans": plans})
+    ws = await hass_ws_client(hass)
+    await ws.send_json({"id": 1, "type": "groundskeeper/plans", "entry_id": entry.entry_id})
+    reply = await ws.receive_json()
+    assert reply["success"] and reply["result"]["plans"] == []

@@ -168,9 +168,11 @@ class GroundskeeperClient:
         """The robot's plans as the panel last read them, as {id, name}."""
         data = await self._get_json(PLANS_PATH)
         plans = data.get("plans") if isinstance(data, dict) else None
+        if not isinstance(plans, list):
+            return []
         return [
             {"id": p["id"], "name": str(p.get("name") or f"Plan {p['id']}")}
-            for p in plans or []
+            for p in plans
             if isinstance(p, dict) and isinstance(p.get("id"), int) and not isinstance(p.get("id"), bool)
         ]
 
