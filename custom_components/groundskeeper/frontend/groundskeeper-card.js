@@ -134,7 +134,7 @@ class GroundskeeperCard extends HTMLElement {
     return (c.show_status ? 1 : 0) + (c.show_map ? Math.ceil(c.map_height / 50) : 0) + (c.show_camera ? 4 : 0);
   }
 
-  getGridOptions() { return { columns: 12, rows: 8, min_columns: 6, min_rows: 3 }; }
+  getGridOptions() { return { columns: 12, rows: "auto", min_columns: 6 }; }   // height follows the content
 
   static getStubConfig() { return { show_status: true, show_map: true, show_camera: true, camera: "auto" }; }
 
