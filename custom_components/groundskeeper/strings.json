@@ -38,7 +38,31 @@
       "wrong_robot": "That token belongs to a panel for a different robot."
     }
   },
+  "options": {
+    "step": {
+      "init": {
+        "title": "What to follow live",
+        "description": "What Groundskeeper follows live from the panel. Only the device tracker records a position.",
+        "data": {
+          "map": "Map",
+          "follow_camera": "Follow camera",
+          "device_tracker": "Device tracker"
+        },
+        "data_description": {
+          "map": "The yard map and live position, for the card only: never in history.",
+          "follow_camera": "Which Frigate camera covers the robot: a sensor (recorded) and a camera.",
+          "device_tracker": "The robot on Home Assistant's map. Its position is kept in history."
+        }
+      }
+    }
+  },
   "entity": {
+    "camera": {
+      "follow_camera": { "name": "Follow camera" }
+    },
+    "device_tracker": {
+      "robot": { "name": "Position" }
+    },
     "binary_sensor": {
       "running": { "name": "Run in progress" },
       "robot_online": { "name": "Robot online" },
@@ -61,7 +85,8 @@
       "last_run": { "name": "Last run" },
       "next_window": { "name": "Next window" },
       "start_check": { "name": "Start check" },
-      "cloud": { "name": "Cloud connection" }
+      "cloud": { "name": "Cloud connection" },
+      "follow_camera": { "name": "Follow camera" }
     }
   }
 }

@@ -86,6 +86,7 @@ async def test_a_new_token_after_a_refusal(hass, aioclient_mock, entry):
     result = await hass.config_entries.flow.async_configure(result["flow_id"], {CONF_API_TOKEN: "gk_fresh"})
     assert result["type"] is FlowResultType.ABORT and result["reason"] == "reauth_successful"
     assert entry.data[CONF_API_TOKEN] == "gk_fresh"
+    await hass.async_block_till_done()        # the entry reloads with the new token: let it finish within the test
 
 
 async def test_a_token_for_another_robot_is_refused_on_reauth(hass, aioclient_mock, entry):

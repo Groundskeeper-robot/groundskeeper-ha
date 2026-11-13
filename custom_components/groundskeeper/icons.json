@@ -1,5 +1,11 @@
 {
   "entity": {
+    "camera": {
+      "follow_camera": { "default": "mdi:cctv" }
+    },
+    "device_tracker": {
+      "robot": { "default": "mdi:robot-mower" }
+    },
     "binary_sensor": {
       "can_start": { "default": "mdi:play-circle-outline" },
       "rtk_wait": { "default": "mdi:crosshairs-question" },
@@ -16,7 +22,8 @@
       "last_run": { "default": "mdi:history" },
       "next_window": { "default": "mdi:calendar-clock" },
       "start_check": { "default": "mdi:clipboard-check-outline" },
-      "cloud": { "default": "mdi:cloud-outline" }
+      "cloud": { "default": "mdi:cloud-outline" },
+      "follow_camera": { "default": "mdi:cctv" }
     }
   }
 }

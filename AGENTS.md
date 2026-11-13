@@ -7,6 +7,10 @@ token, never to the robot. The panel repository's `AGENTS.md` has the project's 
   only, behind the panel's own switch and checks; never add a way around them.
 - **No private data in Home Assistant.** Never store or log the robot's serial (use `robot_id()`), coordinates, the
   token or the panel address in entities, attributes, unique ids or diagnostics.
+  - **One exception: the Position device tracker,** off until the person switches it on in the options (decided by
+    the maintainer, 2026-11-12). Only that entity carries coordinates, and its option says they go into Home
+    Assistant's history. Every other entity, and diagnostics, stays free of them. The map and live position for the
+    card go over the websocket only, never into an entity. Don't add another exception without the maintainer.
 - **Tests are synthetic.** Fixtures come from the panel's demo mode (`DEMO=1`). Never test against a panel connected
   to a real robot, and never write a real mow's dates, times or readings into code, tests, docs or commits.
 - The summary's shape is versioned (`api`). Read fields defensively; a missing one shows as unknown, never a crash.

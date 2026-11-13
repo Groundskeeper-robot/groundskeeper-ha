@@ -1,1 +1,3 @@
 pytest-homeassistant-custom-component==0.13.375
+# Home Assistant's camera component needs this to import; the test package does not install component requirements.
+PyTurboJPEG==1.8.3
