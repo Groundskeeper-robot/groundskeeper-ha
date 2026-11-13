@@ -330,14 +330,17 @@ async def test_the_options_flow(hass, aioclient_mock, entry):
 
 async def test_a_runs_track_over_the_websocket(hass, aioclient_mock, entry, hass_ws_client):
     await set_up(hass, entry, aioclient_mock)
-    fields = ["ts", "lon", "lat", "x", "y", "rtk_status", "sats"]
-    rows = [[1.0, -1.5, 50.5, 0, 0, 4, 30], [2.0, -1.5001, 50.5001, 1, 1, 5, 29], [3.0, None, None, 0, 0, 0, 0]]
-    aioclient_mock.get(f"{URL}/api/runs/12/points", json={"fields": fields, "rows": rows, "relabel": False})
+    demo = fixture("run_points")  # GET /api/runs/<id>/points from the panel's demo, first rows
+    fields = demo["fields"]
+    no_fix = list(demo["rows"][-1])  # a variation: a sample without a position is left out
+    no_fix[fields.index("lon")] = no_fix[fields.index("lat")] = None
+    aioclient_mock.get(f"{URL}/api/runs/12/points", json={**demo, "rows": [*demo["rows"], no_fix]})
     ws = await hass_ws_client(hass)
     await ws.send_json({"id": 1, "type": "groundskeeper/track", "entry_id": entry.entry_id, "run_id": 12})
     msg = await ws.receive_json()
     assert msg["success"], msg
-    assert msg["result"] == {"run_id": 12, "points": [[1.0, -1.5, 50.5, 4], [2.0, -1.5001, 50.5001, 5]]}
+    want = [[r[fields.index(k)] for k in ("ts", "lon", "lat", "rtk_status")] for r in demo["rows"]]
+    assert msg["result"] == {"run_id": 12, "points": want}
 
 
 async def test_only_what_is_new_of_a_track(hass, aioclient_mock, entry, hass_ws_client):
