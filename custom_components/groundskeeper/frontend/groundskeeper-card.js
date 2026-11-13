@@ -24,6 +24,10 @@ const PAD_M = 6;                                         // around the yard when
 const TRAIL_MAX = 3000;                                  // live samples kept outside a run's track
 const RESUBSCRIBE_MS = 2000;
 const ROBOT_PX = 14;
+const RETRY_MS = 10000;                                  // a failed subscribe, or a map the panel has not read yet
+const RETRY_OFF_MS = 60000;                              // the map and camera switched off in the options
+const WATCHDOG_MS = 30000;                               // nothing on the feed for this long: subscribe again
+const TRACK_EVERY_MS = 10000;                            // the current run's new points, at most this often
 
 const DEFAULTS = { show_status: true, show_map: true, show_camera: true, camera: "auto", map_height: 320 };
 
@@ -83,6 +87,13 @@ class GroundskeeperCard extends HTMLElement {
     this._unsub = null;
     this._camEntity = null;
     this._built = false;
+    this._gen = 0;              // see _start
+    this._again = null;
+    this._watchdog = null;
+    this._mapOff = false;
+    this._mapTried = 0;
+    this._drawn = null;         // how much of the track is drawn: {run, n, colour, last}
+    this._notes = {};
   }
 
   /* -- Lovelace API ------------------------------------------------------------------------------------------ */
@@ -99,6 +110,10 @@ class GroundskeeperCard extends HTMLElement {
   set hass(hass) {
     const first = !this._hass;
     this._hass = hass;
+    if (this._notes.robot && this._device()) {        // the robot turned up after the card was drawn
+      this._clearNote("robot");
+      this._built = false;
+    }
     if (!this._built) this._render();
     else this._updateStatus();
     if (first || !this._unsub) this._start();
@@ -106,7 +121,10 @@ class GroundskeeperCard extends HTMLElement {
   }
 
   connectedCallback() { if (this._hass) this._start(); }
-  disconnectedCallback() { this._stop(); }
+  disconnectedCallback() {
+    this._stop();
+    this._resize?.disconnect();
+  }
 
   getCardSize() {
     const c = this._config;
@@ -181,49 +199,85 @@ class GroundskeeperCard extends HTMLElement {
     return out;
   }
 
-  /* -- the live feed --------------------------------------------------------------------------------------------- */
+  /* -- the live feed --------------------------------------------------------------------------------------------- *
+   * One subscription per card while it is on the page. `_gen` counts starts and stops: anything that finishes after
+   * a stop, a reset or another robot was picked (a subscribe, a map or a track load) sees a different generation and
+   * is dropped. A failed subscribe waits and tries again (never on every hass update), and a watchdog starts over
+   * when nothing has come for WATCHDOG_MS, which also covers a subscription lost when Home Assistant restarts. */
   _reset() {
     this._stop();
     this._live = this._pose = this._map = this._mapError = null;
     this._mapSha = undefined;
-    this._track = { run: null, points: [], since: 0, busy: false };
+    this._mapOff = false;
+    this._loadingMap = false;
+    this._mapToken = null;
+    this._mapTried = 0;
+    this._track = { run: null, points: [], since: 0, busy: false, at: 0 };
     this._trail = [];
+    this._drawn = null;
   }
 
   async _start() {
-    if (this._unsub || this._starting || !this._hass || !this.isConnected) return;
+    if (this._unsub || this._starting || this._again || !this._hass || !this.isConnected) return;
     const entry = this._entryId();
     if (!entry) return;
+    const gen = ++this._gen;
     this._starting = true;
     if (this._config.show_map && !this._map) this._loadMap();     // at the same time as subscribing
+    let unsub = null;
     try {
-      this._unsub = await this._hass.connection.subscribeMessage(
-        (msg) => this._onEvent(msg), { type: `${DOMAIN}/subscribe`, entry_id: entry });
+      unsub = await this._hass.connection.subscribeMessage(
+        (msg) => { if (gen === this._gen) this._onEvent(msg); }, { type: `${DOMAIN}/subscribe`, entry_id: entry });
     } catch (err) {
-      this._setNote(err?.code === "live_off" ? "The map and follow camera are switched off in the integration's options."
-        : "The live feed is not available.");
-      this._unsub = null;
+      if (gen !== this._gen) return;
+      this._liveOff = err?.code === "live_off";
+      this._setNote(this._liveOff ? "The map and follow camera are switched off in the integration's options."
+        : "The live feed is not available yet; trying again.", "live");
+      this._retry(this._liveOff ? RETRY_OFF_MS : RETRY_MS);
+      return;
     } finally {
-      this._starting = false;
+      if (gen === this._gen) this._starting = false;
     }
+    if (gen !== this._gen || !this.isConnected) {               // stopped or switched while subscribing
+      Promise.resolve(unsub()).catch(() => {});
+      return;
+    }
+    this._unsub = unsub;
+    this._lastEvent = Date.now();
+    this._clearNote("live");
+    clearInterval(this._watchdog);
+    this._watchdog = setInterval(() => {
+      if (this._unsub && Date.now() - this._lastEvent > WATCHDOG_MS) { this._stop(); this._start(); }
+    }, WATCHDOG_MS / 3);
+  }
+
+  _retry(ms) {
+    clearTimeout(this._again);
+    this._again = setTimeout(() => { this._again = null; this._start(); }, ms);
   }
 
   _stop() {
+    this._gen++;
+    this._starting = false;
     if (this._unsub) {
       const u = this._unsub;
       this._unsub = null;
       Promise.resolve(u()).catch(() => {});
     }
     clearTimeout(this._again);
+    this._again = null;
+    clearInterval(this._watchdog);
+    this._watchdog = null;
   }
 
   _onEvent({ event, data }) {
+    this._lastEvent = Date.now();
     if (event === "closed") {          // the entry reloaded: subscribe again shortly, and read the map again
-      this._unsub = null;
+      this._stop();                    // also drops it from the client's list, so a reconnect does not revive it
       this._map = null;
       this._mapSha = undefined;
-      clearTimeout(this._again);
-      this._again = setTimeout(() => this._start(), RESUBSCRIBE_MS);
+      this._mapOff = false;
+      this._retry(RESUBSCRIBE_MS);
       return;
     }
     if (event === "snapshot") {
@@ -246,10 +300,13 @@ class GroundskeeperCard extends HTMLElement {
   _onState(s) {
     this._live = s;
     if (s.position && (!this._pose || (s.position.t || 0) >= (this._pose.t || 0))) this._pose = s.position;
-    if (s.map !== undefined && this._mapSha !== undefined && s.map !== this._mapSha) this._loadMap();
+    if (this._config.show_map && !this._mapOff) {
+      if (!this._map && !this._loadingMap && Date.now() - this._mapTried >= RETRY_MS) this._loadMap();   // failed: again
+      else if (s.map !== undefined && this._mapSha !== undefined && s.map !== this._mapSha) this._loadMap();
+    }
     const run = s.run ? s.run.id : null;
-    if (run !== this._track.run) this._track = { run, points: [], since: 0, busy: false };
-    if (run !== null && this._config.show_map) this._loadTrack();
+    if (run !== this._track.run) this._track = { run, points: [], since: 0, busy: false, at: 0 };
+    if (run !== null && this._config.show_map && Date.now() - this._track.at >= TRACK_EVERY_MS) this._loadTrack();
     this._drawRobot();
     this._updateCamera();
   }
@@ -262,31 +319,36 @@ class GroundskeeperCard extends HTMLElement {
     }
     if (this._trail.length > TRAIL_MAX) this._trail.splice(0, this._trail.length - TRAIL_MAX);
     this._drawRobot();
-    this._drawTrack();
+    if (this._track.run === null) this._drawTrack();     // a run's track changes only when it is fetched
   }
 
   async _loadMap() {
     const entry = this._entryId();
     if (!entry || this._loadingMap) return;
+    const token = (this._mapToken = {});
     this._loadingMap = true;
+    this._mapTried = Date.now();
+    let map = null, error = null, off = false;
     try {
-      const map = await this._hass.callWS({ type: `${DOMAIN}/map`, entry_id: entry });
+      map = await this._hass.callWS({ type: `${DOMAIN}/map`, entry_id: entry });
       if (map?.yard?.url) {
         try {
           const signed = await this._hass.callWS({ type: "auth/sign_path", path: map.yard.url, expires: 86400 });
           map.yard.signed = signed.path;
         } catch (_) { /* no photo, the shapes still show */ }
       }
-      this._map = map;
-      this._mapSha = map.map ?? null;
-      this._mapError = null;
     } catch (err) {
-      this._map = null;
-      this._mapError = err?.code === "map_off" ? "The map is switched off in the integration's options."
-        : "The panel has not given its map yet.";
-    } finally {
-      this._loadingMap = false;
+      map = null;
+      off = err?.code === "map_off";
+      error = off ? "The map is switched off in the integration's options." : "The panel has not given its map yet.";
     }
+    if (token !== this._mapToken) return;      // the card was reset (another robot) meanwhile
+    this._loadingMap = false;
+    this._map = map;
+    this._mapSha = map ? map.map ?? null : undefined;
+    this._mapError = error;
+    this._mapOff = off;
+    this._drawn = null;
     this._drawMap();
   }
 
@@ -295,10 +357,11 @@ class GroundskeeperCard extends HTMLElement {
     const entry = this._entryId();
     if (t.busy || t.run === null || !entry) return;
     t.busy = true;
+    t.at = Date.now();
     try {
       const res = await this._hass.callWS({ type: `${DOMAIN}/track`, entry_id: entry, run_id: t.run, since: t.since });
-      if (this._track !== t) return;            // a new run started meanwhile
-      for (const p of res.points || []) t.points.push(p);
+      if (this._track !== t) return;            // a new run started, or the card was reset, meanwhile
+      for (const p of res.points || []) if (typeof p?.[0] === "number") t.points.push(p);
       if (t.points.length) t.since = t.points[t.points.length - 1][0];
     } catch (_) {
       /* the next state event asks again */
@@ -317,6 +380,7 @@ class GroundskeeperCard extends HTMLElement {
     root.append(el("style", { text: STYLE }));
     const card = el("ha-card", { header: c.title || undefined });
     this._noteEl = el("div", { class: "note", hidden: true });
+    this._showNotes();
     this._statusEl = c.show_status ? el("div", { class: "status" }) : null;
     this._mapWrap = c.show_map ? el("div", { class: "map", style: `height:${Number(c.map_height) || 320}px` }) : null;
     this._camWrap = c.show_camera ? el("div", { class: "camera" }) : null;
@@ -335,9 +399,21 @@ class GroundskeeperCard extends HTMLElement {
     this._updateCamera();
   }
 
-  _setNote(text) {
+  /* Notes by kind ("robot", "live"), so one going away leaves the other. */
+  _setNote(text, kind = "robot") {
+    this._notes[kind] = text;
+    this._showNotes();
+  }
+
+  _clearNote(kind) {
+    delete this._notes[kind];
+    this._showNotes();
+  }
+
+  _showNotes() {
     if (!this._noteEl) return;
-    this._noteEl.textContent = text || "";
+    const text = Object.values(this._notes).filter(Boolean).join(" ");
+    this._noteEl.textContent = text;
     this._noteEl.hidden = !text;
   }
 
@@ -433,9 +509,16 @@ class GroundskeeperCard extends HTMLElement {
       onclick: () => { this._follow = !this._follow; follow.setAttribute("aria-pressed", String(this._follow)); this._view(); this._drawRobot(); },
     }, el("ha-icon", { icon: "mdi:crosshairs-gps" }));
     wrap.replaceChildren(svg, follow);
+    this._drawn = null;
     this._view();
     this._drawTrack();
     this._drawRobot();
+    // The marker's size depends on the drawn size, unknown until laid out (and it changes with the window).
+    this._resize?.disconnect();
+    if (window.ResizeObserver) {
+      this._resize = new ResizeObserver(() => this._drawRobot());
+      this._resize.observe(svg);
+    }
   }
 
   _view() {
@@ -469,26 +552,42 @@ class GroundskeeperCard extends HTMLElement {
     return Math.max(1, (metresPerPx * ROBOT_PX) / 1.5);              // the body is 1.5 m across
   }
 
+  /* The run's track by RTK fix (or, without a run, the live trail). A run's track only grows, so only its new
+   * points are added; the trail, a new run or a new map draws it all again. */
   _drawTrack() {
     const g = this._trackG;
     if (!g || !this._proj) return;
     const t = this._track;
-    const rows = t.run !== null && t.points.length ? t.points : this._trail.map(([ts, lon, lat]) => [ts, lon, lat, -1]);
+    const run = t.run !== null && t.points.length ? t.run : null;
+    const rows = run !== null ? t.points : this._trail.map(([ts, lon, lat]) => [ts, lon, lat, -1]);
+    let d = this._drawn;
+    if (!d || d.run !== run || run === null || rows.length < d.n) {
+      g.replaceChildren();
+      d = this._drawn = { run, n: 0, colour: null, last: null };
+    }
     const parts = [];
     let cur = null;
-    for (const [, lon, lat, rtk] of rows) {
+    for (let i = d.n; i < rows.length; i++) {
+      const [, lon, lat, rtk] = rows[i];
+      if (typeof lon !== "number" || typeof lat !== "number") continue;
       const colour = rtk === -1 ? C.trail : RTK_COLOUR[rtk] || C.single;
       const xy = this._proj.xy(lon, lat).map((v) => v.toFixed(2)).join(",");
-      if (!cur || cur.colour !== colour) {
-        if (cur) cur.pts.push(xy);              // join the segments
+      if (!cur) {
+        cur = { colour, pts: d.last ? [d.last, xy] : [xy] };    // join onto what is drawn already
+        parts.push(cur);
+      } else if (cur.colour !== colour) {
+        cur.pts.push(xy);
         cur = { colour, pts: [xy] };
         parts.push(cur);
       } else {
         cur.pts.push(xy);
       }
+      d.last = xy;
     }
-    g.replaceChildren(...parts.filter((s) => s.pts.length > 1).map((s) =>
-      el("polyline", { points: s.pts.join(" "), stroke: s.colour })));
+    d.n = rows.length;
+    for (const part of parts) {
+      if (part.pts.length > 1) g.append(el("polyline", { points: part.pts.join(" "), stroke: part.colour }));
+    }
   }
 
   async _updateCamera() {

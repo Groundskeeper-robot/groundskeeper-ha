@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 import json
+import math
 import re
 from typing import Any
 from urllib.parse import quote, urlsplit
@@ -145,7 +146,7 @@ class GroundskeeperClient:
             if not isinstance(row, list) or len(row) < len(fields):
                 continue
             t, lon, lat = (row[i] for i in ix)
-            if isinstance(lon, (int, float)) and isinstance(lat, (int, float)):
+            if all(isinstance(v, (int, float)) and math.isfinite(v) for v in (t, lon, lat)):
                 out.append([t, lon, lat, row[rtk] if rtk is not None else None])
         return out
 

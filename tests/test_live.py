@@ -371,7 +371,9 @@ async def test_the_card_is_served(hass, aioclient_mock, entry, hass_client_no_au
     assert r.status == 200
     text = await r.text()
     assert 'customElements.define("groundskeeper-card"' in text
-    assert "innerHTML" not in text  # text from the panel or HA is always set as text
+    # Text from the panel or Home Assistant is only ever set as text: no HTML parsing anywhere in the card.
+    for sink in ("innerHTML", "outerHTML", "insertAdjacentHTML", "document.write", "eval(", "new Function"):
+        assert sink not in text, sink
 
 
 def test_the_card_says_the_integrations_version():
@@ -383,3 +385,63 @@ def test_the_card_says_the_integrations_version():
     card = (root / "frontend" / "groundskeeper-card.js").read_text(encoding="utf-8")
     version = json.loads((root / "manifest.json").read_text(encoding="utf-8"))["version"]
     assert re.search(r'const CARD_VERSION = "([^"]+)"', card).group(1) == version
+
+
+@pytest.mark.parametrize(
+    ("fields", "rows", "points"),
+    [
+        (["ts", "lon", "lat"], [[1.0, -1.5, 50.5]], [[1.0, -1.5, 50.5, None]]),  # no rtk_status: unknown
+        (["ts", "lon", "lat", "rtk_status"], [[None, -1.5, 50.5, 4]], []),  # no time: left out
+        (["ts", "lon", "lat", "rtk_status"], [[1.0, -1.5], "x", [2.0, "a", 50.5, 4]], []),  # short, odd
+    ],
+)
+async def test_odd_track_rows_are_left_out(hass, aioclient_mock, entry, hass_ws_client, fields, rows, points):
+    await set_up(hass, entry, aioclient_mock)
+    aioclient_mock.get(f"{URL}/api/runs/12/points", json={"fields": fields, "rows": rows})
+    ws = await hass_ws_client(hass)
+    await ws.send_json({"id": 1, "type": "groundskeeper/track", "entry_id": entry.entry_id, "run_id": 12})
+    msg = await ws.receive_json()
+    assert msg["success"] and msg["result"]["points"] == points
+
+
+@pytest.mark.parametrize("body", [{"rows": []}, {"fields": ["ts", "x"], "rows": []}, ["not", "a", "dict"]])
+async def test_a_track_of_the_wrong_shape_is_an_error(hass, aioclient_mock, entry, hass_ws_client, body):
+    await set_up(hass, entry, aioclient_mock)
+    aioclient_mock.get(f"{URL}/api/runs/12/points", json=body)
+    ws = await hass_ws_client(hass)
+    await ws.send_json({"id": 1, "type": "groundskeeper/track", "entry_id": entry.entry_id, "run_id": 12})
+    msg = await ws.receive_json()
+    assert not msg["success"] and msg["error"]["code"] == "panel_unavailable"
+
+
+@pytest.mark.parametrize("since", [-1, 1e13, "nan"])
+async def test_a_track_since_out_of_range_is_refused(hass, aioclient_mock, entry, hass_ws_client, since):
+    await set_up(hass, entry, aioclient_mock)
+    ws = await hass_ws_client(hass)
+    await ws.send_json(
+        {"id": 1, "type": "groundskeeper/track", "entry_id": entry.entry_id, "run_id": 12, "since": since}
+    )
+    msg = await ws.receive_json()
+    assert not msg["success"] and msg["error"]["code"] == "invalid_format"
+
+
+async def test_no_track_for_an_unknown_entry(hass, aioclient_mock, entry, hass_ws_client):
+    await set_up(hass, entry, aioclient_mock)
+    ws = await hass_ws_client(hass)
+    await ws.send_json({"id": 1, "type": "groundskeeper/track", "entry_id": "nope", "run_id": 12})
+    msg = await ws.receive_json()
+    assert not msg["success"] and msg["error"]["code"] == "not_found"
+
+
+async def test_the_card_is_added_to_dashboards_with_a_hash_of_the_file(hass, aioclient_mock, entry, monkeypatch):
+    import hashlib
+    from pathlib import Path
+
+    from homeassistant.components import frontend
+
+    added = []
+    monkeypatch.setattr(frontend, "add_extra_js_url", lambda _hass, url, es5=False: added.append(url))
+    hass.config.components.add("frontend")
+    await set_up(hass, entry, aioclient_mock)
+    card = Path(__file__).parent.parent / "custom_components" / "groundskeeper" / "frontend" / "groundskeeper-card.js"
+    assert added == [f"{CARD_URL}?v={hashlib.sha256(card.read_bytes()).hexdigest()[:12]}"]

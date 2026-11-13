@@ -88,7 +88,7 @@ async def ws_map(hass: HomeAssistant, connection: websocket_api.ActiveConnection
         vol.Required("type"): "groundskeeper/track",
         vol.Required("entry_id"): str,
         vol.Required("run_id"): vol.All(int, vol.Range(min=0)),
-        vol.Optional("since", default=0): vol.Coerce(float),
+        vol.Optional("since", default=0): vol.All(vol.Coerce(float), vol.Range(min=0, max=1e12)),
     }
 )
 @websocket_api.async_response
