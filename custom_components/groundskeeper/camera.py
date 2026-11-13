@@ -78,8 +78,10 @@ class FollowCamera(GroundskeeperLiveEntity, Camera):
         except (GroundskeeperError, ValueError):
             return None
         try:
-            return await async_aiohttp_proxy_stream(
-                self.hass, request, upstream.content, upstream.headers.get("Content-Type", "multipart/x-mixed-replace")
-            )
+            # Only an MJPEG stream passes, whatever the panel says it is: never HTML on Home Assistant's address.
+            ctype = upstream.headers.get("Content-Type", "")
+            if not ctype.lower().startswith("multipart/x-mixed-replace"):
+                return None
+            return await async_aiohttp_proxy_stream(self.hass, request, upstream.content, ctype)
         finally:
             upstream.close()

@@ -28,10 +28,17 @@ def summary(name: str = "mowing", **changes: Any) -> dict[str, Any]:
     return data
 
 
-# A made-up spot (the demo yard's own coordinates are not repeated here) and the panel's live state around it.
-POSE = {"t": 100.0, "lon": -1.5, "lat": 50.5, "heading": 90}
-LIVE_STATE = {"api": LIVE_API, "state": "mowing", "activity": "working", "position": {**POSE, "t": 99.0},
-              "run": {"id": 12, "distance_m": 40.0}, "follow": {"camera": "garden", "covered": True}, "map": "abc123"}
+def fixture(name: str) -> Any:
+    return json.loads((FIXTURES / f"{name}.json").read_text(encoding="utf-8"))
+
+
+# The live feed as the panel's demo sends it (GET /api/ha/stream with DEMO=1): a state event and the pose samples
+# after it. The demo has no Frigate, so LIVE_STATE adds a follow camera to the demo state.
+DEMO_STATE = fixture("live_state")
+DEMO_POSES = fixture("live_poses")
+POSE = DEMO_POSES[-1]
+LIVE_STATE = {**DEMO_STATE, "follow": {"camera": "garden", "covered": True}}
+assert DEMO_STATE["api"] == LIVE_API
 
 
 def sse(*events: tuple[str, Any]) -> bytes:
