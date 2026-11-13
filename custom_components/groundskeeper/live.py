@@ -73,6 +73,8 @@ class GroundskeeperLive:
         """One event from the panel: keep it and pass it on."""
         if event == "state" and isinstance(data, dict):
             self.state, self.stale = data, False
+            if data.get("position") is None:
+                self.pose = None  # the panel has no position now (no fix): an older pose is not the current one
             self._cancel_stale()
             self._stale_unsub = async_call_later(self.hass, LIVE_STALE_S, self._stale)
         elif event == "pose" and isinstance(data, list):

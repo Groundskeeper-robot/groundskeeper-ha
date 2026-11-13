@@ -463,3 +463,13 @@ async def test_only_an_mjpeg_stream_passes_through(hass, aioclient_mock, entry):
     )
     camera = hass.data["camera"].get_entity(CAMERA)
     assert await camera.handle_async_mjpeg_stream(make_mocked_request("GET", "/")) is None
+
+
+async def test_no_position_from_the_panel_clears_the_tracker(hass, aioclient_mock, entry):
+    with_options(hass, entry, **{CONF_DEVICE_TRACKER: True})
+    await set_up(hass, entry, aioclient_mock, live=sse(("state", LIVE_STATE), ("pose", [POSE])))
+    assert hass.states.get(TRACKER).attributes["latitude"] == POSE["lat"]
+    entry.runtime_data.live.handle("state", {**LIVE_STATE, "position": None})
+    await hass.async_block_till_done()
+    assert entry.runtime_data.live.position is None
+    assert hass.states.get(TRACKER).state == STATE_UNAVAILABLE
