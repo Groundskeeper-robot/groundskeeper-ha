@@ -61,7 +61,8 @@ class GroundskeeperMower(GroundskeeperEntity, LawnMowerEntity):
         if self.activity == LawnMowerActivity.PAUSED:
             await send_or_raise(self.coordinator, "resume")
             return
-        plan = (self.coordinator.data.get("can_start") or {}).get("plan_id")
+        can_start = self.coordinator.data.get("can_start")
+        plan = can_start.get("plan_id") if isinstance(can_start, dict) else None
         if not isinstance(plan, int) or isinstance(plan, bool):
             raise HomeAssistantError("The panel has no plan to start: pick one on the Groundskeeper card")
         await send_or_raise(self.coordinator, "start_plan", plan)

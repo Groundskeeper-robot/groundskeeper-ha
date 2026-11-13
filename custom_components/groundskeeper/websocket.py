@@ -32,7 +32,7 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 
 from . import commands
-from .api import IMAGERY_NAME, GroundskeeperError
+from .api import IMAGERY_NAME, CommandRejected, GroundskeeperError
 from .const import COMMANDS, CONF_MAP, DOMAIN
 from .coordinator import GroundskeeperCoordinator, options
 
@@ -161,10 +161,17 @@ def ws_subscribe(hass: HomeAssistant, connection: websocket_api.ActiveConnection
     connection.send_message(websocket_api.event_message(msg["id"], {"event": "snapshot", "data": snapshot}))
 
 
+def plan_id(value: Any) -> int:
+    """A plan id: a whole number, 0 or more (not true or false, which Python counts as ints)."""
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise vol.Invalid("plan_id must be a whole number, 0 or more")
+    return value
+
+
 COMMAND_SCHEMA = {
     vol.Required("entry_id"): str,
     vol.Required("cmd"): vol.In(COMMANDS),
-    vol.Optional("plan_id"): vol.All(int, vol.Range(min=0)),
+    vol.Optional("plan_id"): plan_id,
 }
 
 
@@ -194,8 +201,9 @@ async def ws_plans(hass: HomeAssistant, connection: websocket_api.ActiveConnecti
             msg["id"], "panel_unavailable", f"The panel did not give its plans ({type(err).__name__})"
         )
         return
-    default = (coordinator.data or {}).get("can_start") or {}
-    connection.send_result(msg["id"], {"plans": plans, "default": default.get("plan_id")})
+    default = (coordinator.data or {}).get("can_start")
+    plan = default.get("plan_id") if isinstance(default, dict) else None
+    connection.send_result(msg["id"], {"plans": plans, "default": plan if isinstance(plan, int) else None})
 
 
 @websocket_api.websocket_command({vol.Required("type"): "groundskeeper/preview", **COMMAND_SCHEMA})
@@ -206,6 +214,12 @@ async def ws_preview(hass: HomeAssistant, connection: websocket_api.ActiveConnec
         return
     try:
         result = await commands.preview(coordinator, msg["cmd"], msg.get("plan_id"))
+    except ValueError as err:
+        connection.send_error(msg["id"], websocket_api.ERR_INVALID_FORMAT, str(err))
+        return
+    except CommandRejected as err:
+        connection.send_error(msg["id"], "rejected", f"The panel turned it down: {err}")
+        return
     except GroundskeeperError as err:
         connection.send_error(msg["id"], "panel_unavailable", f"The panel could not be asked ({type(err).__name__})")
         return
@@ -220,7 +234,16 @@ async def ws_command(hass: HomeAssistant, connection: websocket_api.ActiveConnec
         return
     try:
         result = await commands.send(coordinator, msg["cmd"], msg.get("plan_id"))
+    except ValueError as err:
+        connection.send_error(msg["id"], websocket_api.ERR_INVALID_FORMAT, str(err))
+        return
+    except CommandRejected as err:
+        connection.send_error(msg["id"], "rejected", f"The panel turned it down: {err}")
+        return
     except GroundskeeperError as err:
-        connection.send_error(msg["id"], "panel_unavailable", f"The panel could not be asked ({type(err).__name__})")
+        connection.send_error(
+            msg["id"], "panel_unavailable",
+            f"No answer from the panel ({type(err).__name__}): the command may or may not have gone out",
+        )
         return
     connection.send_result(msg["id"], {**result, "why_not": None if result.get("sent") else commands.why_not(result)})

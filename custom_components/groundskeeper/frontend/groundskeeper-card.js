@@ -37,6 +37,7 @@ const RESIGN_MS = 20 * 3600 * 1000;                      // the photo's signed a
 const PLANS_RETRY_MS = 60000;                            // the plans could not be read: ask again this often at most
 const SAY_MS = 12000;                                    // how long a command's result stays under the buttons
 const TAP_AGAIN_MS = 4000;                               // Resume: the second tap must come this soon
+const PREVIEW_EVERY_MS = 30000;                          // Start's checks, asked again this often while it is open
 
 // Which controls make sense in each mower state (Home Assistant's lawn_mower states). Unknown: all of them.
 const CONTROLS = {
@@ -48,6 +49,10 @@ const CONTROLS = {
   error: ["stop", "cmd_recharge"],
 };
 const CONTROL_ALL = ["start_plan", "pause", "resume", "stop", "cmd_recharge"];
+// Commands that set the robot moving, and the ones that stop it. A start or resume still waiting for the panel's
+// answer never holds back a Pause, Stop or Dock: each kind waits only for its own.
+const MOVES = ["start_plan", "resume"];
+const kindOf = (name) => (MOVES.includes(name) ? "move" : "stop");
 const CONTROL_LABEL = { start_plan: "Start", pause: "Pause", resume: "Resume", stop: "Stop", cmd_recharge: "Dock" };
 const CONTROL_ICON = {
   start_plan: "mdi:play", pause: "mdi:pause", resume: "mdi:play-pause", stop: "mdi:stop",
@@ -123,7 +128,10 @@ class GroundskeeperCard extends HTMLElement {
     this._drawn = null;         // how much of the track is drawn: {run, n, colour, last}
     this._notes = {};
     this._chips = {};
-    this._cmd = { on: null, plans: [], plan: null, tried: 0, busy: false, open: false, preview: null, asked: 0 };
+    this._cmd = {
+      on: null, plans: [], plan: null, tried: 0, pending: { move: false, stop: false }, open: false, preview: null,
+      asked: 0,
+    };
   }
 
   /* -- Lovelace API ------------------------------------------------------------------------------------------ */
@@ -253,7 +261,10 @@ class GroundskeeperCard extends HTMLElement {
     this._track = { run: null, points: [], since: 0, busy: false, at: 0 };
     this._trail = [];
     this._drawn = null;
-    this._cmd = { on: null, plans: [], plan: null, tried: 0, busy: false, open: false, preview: null, asked: 0 };
+    this._cmd = {
+      on: null, plans: [], plan: null, tried: 0, pending: { move: false, stop: false }, open: false, preview: null,
+      asked: 0,
+    };
   }
 
   async _start() {
@@ -325,6 +336,10 @@ class GroundskeeperCard extends HTMLElement {
     }
     if (event === "snapshot") {
       this._connected = data.connected;
+      if (this._cmd.on !== true) {                     // a (re)subscribe: the Commands option may be on now
+        this._cmd.tried = 0;
+        this._updateControls();
+      }
       if (data.state) this._onState(data.state);
       if (data.pose) this._onPoses([data.pose]);
     } else if (event === "state") {
@@ -559,7 +574,18 @@ class GroundskeeperCard extends HTMLElement {
     } else if (off) {
       cmd.on = false;
       cmd.open = false;
-    }                                                     // the panel did not answer: as before, asked again later
+    } else {
+      // Not answered (the entry still reloading, the panel away): ask again in RETRY_MS, not a whole minute.
+      cmd.tried = Date.now() - PLANS_RETRY_MS + RETRY_MS;
+    }
+    if (res && cmd.open && cmd.preview?.plan !== cmd.plan) this._preview();   // the chosen plan went away
+    this._updateControls();
+  }
+
+  /* Commands were switched off while the card showed them: hide the row (the integration refuses anyway). */
+  _commandsOff() {
+    this._cmd.on = false;
+    this._cmd.open = false;
     this._updateControls();
   }
 
@@ -578,14 +604,20 @@ class GroundskeeperCard extends HTMLElement {
     for (const name of CONTROL_ALL) {
       const b = c.buttons[name];
       b.hidden = !shown.includes(name);
-      b.disabled = cmd.busy;
+      b.disabled = cmd.pending[kindOf(name)];
       const label = name === "resume" && c.armed === "resume" ? "Tap again to resume" : CONTROL_LABEL[name];
       if (b.lastChild.textContent !== label) b.lastChild.textContent = label;
     }
     if (!shown.includes("start_plan")) cmd.open = false;
     c.buttons.start_plan.setAttribute("aria-expanded", String(cmd.open));
     c.panel.hidden = !cmd.open;
-    if (cmd.open) this._drawStartPanel();
+    if (cmd.open) {
+      // The checks change with the robot and the yard: ask again when the mower's state moves, and now and then.
+      const due = state !== c.previewState || Date.now() - (cmd.previewAt || 0) >= PREVIEW_EVERY_MS;
+      if (due && !cmd.previewing) this._preview(true);
+      this._drawStartPanel();
+    }
+    c.previewState = state;
   }
 
   _buildControls() {
@@ -653,7 +685,7 @@ class GroundskeeperCard extends HTMLElement {
     c.verdict.textContent = verdict;
     c.verdict.classList.toggle("ok", ok);
     c.checks.replaceChildren(...items.map((t) => el("li", { text: t })));
-    c.go.disabled = !ok || cmd.busy;
+    c.go.disabled = !ok || cmd.pending.move;
   }
 
   _press(name) {
@@ -677,49 +709,72 @@ class GroundskeeperCard extends HTMLElement {
     this._send(name);
   }
 
-  async _preview() {
+  /* Start's checks for the chosen plan. `again`: the same plan asked afresh, so the last answer stays up meanwhile
+   * (no flicker); a new plan clears it, since that answer was for another plan. */
+  async _preview(again = false) {
     const cmd = this._cmd;
     const entry = this._entryId();
     const plan = cmd.plan;
     const asked = ++cmd.asked;
-    cmd.preview = null;
-    this._drawStartPanel();
+    cmd.previewAt = Date.now();
+    if (!again || cmd.preview?.plan !== plan) {
+      cmd.preview = null;
+      this._drawStartPanel();
+    }
     if (!entry || plan === null) return;
-    let pv;
+    cmd.previewing = true;
+    let pv, off = false;
     try {
       pv = await this._hass.callWS({ type: `${DOMAIN}/preview`, entry_id: entry, cmd: "start_plan", plan_id: plan });
     } catch (err) {
-      pv = {
-        error: err?.code === "commands_off" ? "Commands are switched off in the integration's options."
-          : "The panel could not be asked; try again.",
-      };
+      off = err?.code === "commands_off";
+      pv = { error: off ? "Commands are switched off in the integration's options."
+        : "The panel could not be asked; try again." };
     }
+    if (asked === cmd.asked) cmd.previewing = false;
     if (this._cmd !== cmd || asked !== cmd.asked) return;    // another plan was picked, or another robot
+    if (off) {
+      this._commandsOff();
+      return;
+    }
     cmd.preview = { ...pv, plan };
+    cmd.previewAt = Date.now();
     if (cmd.open) this._drawStartPanel();
   }
 
   async _send(name, plan) {
     const cmd = this._cmd;
     const entry = this._entryId();
-    if (!entry || cmd.busy) return;
-    cmd.busy = true;
+    const kind = kindOf(name);
+    if (!entry || cmd.pending[kind]) return;
+    cmd.pending[kind] = true;
     this._updateControls();
     const msg = { type: `${DOMAIN}/command`, entry_id: entry, cmd: name };
     if (name === "start_plan") msg.plan_id = plan;
     let text;
     let ok = false;
+    let off = false;
     try {
       const res = await this._hass.callWS(msg);
       ok = res?.sent === true;
       text = ok ? `${CONTROL_LABEL[name]} sent. The panel is checking that the robot follows.`
         : `Not sent: ${res?.why_not || "the panel did not send it"}.`;
     } catch (err) {
-      text = `Not sent: ${err?.message || "the panel could not be asked"}.`;
+      off = err?.code === "commands_off";
+      // No answer (a timeout, a dropped connection): the panel may have sent it, so never say "not sent" here.
+      text = err?.code === "panel_unavailable"
+        ? `No answer from the panel: ${CONTROL_LABEL[name]} may or may not have gone out. `
+          + "Check what the robot is doing before trying again."
+        : `Not sent: ${err?.message || "the panel could not be asked"}.`;
     }
     if (this._cmd !== cmd) return;
-    cmd.busy = false;
+    cmd.pending[kind] = false;
+    if (off) {
+      this._commandsOff();
+      return;
+    }
     if (ok && name === "start_plan") cmd.open = false;
+    else if (name === "start_plan") this._preview(true);     // refused: show what the panel says now
     this._say(text, ok);
     this._updateControls();
   }

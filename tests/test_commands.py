@@ -136,14 +136,18 @@ async def test_the_card_sends_and_hears_why_not(hass, aioclient_mock, entry, has
         ({"cmd": "set_working_state"}, "invalid_format"),
         ({"cmd": "start_plan"}, "invalid_format"),
         ({"cmd": "pause", "override": True}, "invalid_format"),
+        ({"cmd": "start_plan", "plan_id": True}, "invalid_format"),
+        ({"cmd": "start_plan", "plan_id": -1}, "invalid_format"),
+        ({"cmd": "start_plan", "plan_id": "1"}, "invalid_format"),
     ],
 )
 async def test_only_the_five_run_commands_go_through(hass, aioclient_mock, entry, hass_ws_client, msg, code):
     await commands(hass, entry, aioclient_mock)
     ws = await hass_ws_client(hass)
-    await ws.send_json({"id": 1, "type": "groundskeeper/command", "entry_id": entry.entry_id, **msg})
-    reply = await ws.receive_json()
-    assert not reply["success"] and reply["error"]["code"] == code
+    for i, kind in enumerate(("command", "preview"), start=1):
+        await ws.send_json({"id": i, "type": f"groundskeeper/{kind}", "entry_id": entry.entry_id, **msg})
+        reply = await ws.receive_json()
+        assert not reply["success"] and reply["error"]["code"] == code
     assert posts(aioclient_mock) == []
 
 
@@ -163,3 +167,64 @@ async def test_a_panel_that_turns_it_down_is_reported(hass, aioclient_mock, entr
     aioclient_mock.post(SEND_URL, status=400, json={"detail": "confirm: true is required"})
     with pytest.raises(HomeAssistantError, match="confirm: true is required"):
         await press(hass, "pause")
+
+
+async def test_the_helpers_refuse_with_the_option_off(hass, aioclient_mock, entry):
+    from custom_components.groundskeeper import commands as cmds
+
+    await set_up(hass, entry, aioclient_mock)
+    coordinator = entry.runtime_data
+    for call in (cmds.send, cmds.preview):
+        with pytest.raises(cmds.CommandsOff):
+            await call(coordinator, "pause")
+    assert posts(aioclient_mock) == []
+
+
+async def test_switching_commands_off_takes_the_actions_away(hass, aioclient_mock, entry, hass_ws_client):
+    await commands(hass, entry, aioclient_mock)
+    assert hass.states.get(MOWER).attributes[ATTR_SUPPORTED_FEATURES] != 0
+    flow = await hass.config_entries.options.async_init(entry.entry_id)
+    await hass.config_entries.options.async_configure(
+        flow["flow_id"], {"map": True, "follow_camera": True, "device_tracker": False, CONF_COMMANDS: False}
+    )
+    await hass.async_block_till_done()
+    assert hass.states.get(MOWER).attributes[ATTR_SUPPORTED_FEATURES] == 0
+    ws = await hass_ws_client(hass)
+    await ws.send_json({"id": 1, "type": "groundskeeper/command", "entry_id": entry.entry_id, "cmd": "pause"})
+    reply = await ws.receive_json()
+    assert not reply["success"] and reply["error"]["code"] == "commands_off"
+    assert posts(aioclient_mock) == []
+
+
+async def test_a_panel_too_old_for_token_commands_says_so(hass, aioclient_mock, entry, hass_ws_client):
+    await commands(hass, entry, aioclient_mock)
+    aioclient_mock.post(SEND_URL, status=403, json={"detail": "an API token cannot change this"})
+    with pytest.raises(HomeAssistantError, match="an API token cannot change this"):
+        await press(hass, "pause")
+    ws = await hass_ws_client(hass)
+    await ws.send_json({"id": 1, "type": "groundskeeper/command", "entry_id": entry.entry_id, "cmd": "pause"})
+    reply = await ws.receive_json()
+    assert not reply["success"] and reply["error"]["code"] == "rejected"
+    assert "an API token cannot change this" in reply["error"]["message"]
+
+
+async def test_a_summary_without_a_start_check_is_not_a_crash(hass, aioclient_mock, entry, hass_ws_client):
+    await commands(hass, entry, aioclient_mock, data=summary(can_start="not a dict"))
+    with pytest.raises(HomeAssistantError, match="no plan"):
+        await press(hass, "start_mowing")
+    aioclient_mock.get(f"{URL}{PLANS_PATH}", json=fixture("control_plans"))
+    ws = await hass_ws_client(hass)
+    await ws.send_json({"id": 1, "type": "groundskeeper/plans", "entry_id": entry.entry_id})
+    reply = await ws.receive_json()
+    assert reply["success"] and reply["result"]["default"] is None
+
+
+async def test_no_answer_is_not_called_not_sent(hass, aioclient_mock, entry, hass_ws_client):
+    await commands(hass, entry, aioclient_mock)
+    aioclient_mock.post(SEND_URL, exc=TimeoutError)
+    with pytest.raises(HomeAssistantError, match="may or may not have gone out"):
+        await press(hass, "dock")
+    ws = await hass_ws_client(hass)
+    await ws.send_json({"id": 1, "type": "groundskeeper/command", "entry_id": entry.entry_id, "cmd": "pause"})
+    reply = await ws.receive_json()
+    assert reply["error"]["code"] == "panel_unavailable" and "may or may not" in reply["error"]["message"]

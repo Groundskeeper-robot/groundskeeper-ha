@@ -144,13 +144,18 @@ class GroundskeeperClient:
                 timeout=aiohttp.ClientTimeout(total=REQUEST_TIMEOUT_S),
                 allow_redirects=False,
             ) as resp:
-                if resp.status in (401, 403):
+                if resp.status == 401:
                     raise InvalidAuth
                 if resp.status == 404:
                     raise PanelTooOld
-                if resp.status == 400:
-                    detail = (await resp.json(content_type=None) or {}).get("detail")
-                    raise CommandRejected(str(detail or "the panel turned the request down"))
+                if 300 <= resp.status < 400:
+                    raise CannotConnect(f"the panel answered with a redirect ({resp.status}): use its final address")
+                if resp.status in (400, 403):    # 403: a panel too old to take commands from a token, say
+                    try:
+                        detail = (await resp.json(content_type=None) or {}).get("detail")
+                    except (ValueError, AttributeError):
+                        detail = None
+                    raise CommandRejected(str(detail or f"the panel turned the request down ({resp.status})"))
                 resp.raise_for_status()
                 data = await resp.json(content_type=None)
         except (aiohttp.ClientError, TimeoutError, ValueError, AttributeError) as err:

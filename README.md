@@ -87,7 +87,8 @@ tiles and the yard photo.
 Off until you switch **Commands** on under **Configure**. Then:
 
 - The mower entity's **Start** resumes a paused plan, or starts the plan the panel's start check names (the one on
-  its **Can start** sensor). **Pause** pauses, **Dock** sends it back to its dock. They work in automations too.
+  its **Can start** sensor). **Pause** pauses, **Dock** sends it back to its dock. They work in automations too, and
+  go at once: the entity's Start has no confirm step (the card's Start and Resume do).
 - The card shows **Start** (pick a plan, see the panel's checks first), **Pause**, **Resume**, **Stop** and **Dock**.
 
 Home Assistant only asks. The panel sends a command only with its **Control** switch on (Settings → Safety in the

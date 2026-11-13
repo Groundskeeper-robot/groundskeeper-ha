@@ -11,7 +11,7 @@ from typing import Any
 
 from homeassistant.exceptions import HomeAssistantError
 
-from .api import GroundskeeperError
+from .api import CommandRejected, GroundskeeperError
 from .const import CONF_COMMANDS, LOGGER
 from .coordinator import GroundskeeperCoordinator, options
 
@@ -53,7 +53,13 @@ async def send_or_raise(coordinator: GroundskeeperCoordinator, cmd: str, plan_id
     """For an entity action: send, or raise with the panel's reason so Home Assistant shows it."""
     try:
         result = await send(coordinator, cmd, plan_id)
+    except CommandRejected as err:
+        raise HomeAssistantError(f"The panel turned it down: {err}") from err
     except GroundskeeperError as err:
-        raise HomeAssistantError(f"The panel could not be asked ({type(err).__name__}: {err})".strip()) from err
+        # No answer (a timeout, say) does not mean nothing went out: say so, so nobody presses again blind.
+        raise HomeAssistantError(
+            f"No answer from the panel ({type(err).__name__}): the command may or may not have gone out. "
+            "Check the mower's state before trying again."
+        ) from err
     if not result.get("sent"):
         raise HomeAssistantError(f"The panel did not send it: {why_not(result)}")
