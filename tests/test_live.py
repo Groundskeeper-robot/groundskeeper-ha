@@ -218,6 +218,7 @@ async def test_tiles_and_the_yard_photo_pass_through(hass, aioclient_mock, entry
     assert r.status == 200 and await r.read() == b"tile"
     r = await client.get(f"/api/groundskeeper/{entry.entry_id}/imagery/yard.jpg")
     assert r.status == 200 and await r.read() == b"yard"
+    assert "no-store" in r.headers["Cache-Control"]  # never kept in the browser past a sign-out
 
 
 @pytest.mark.parametrize(

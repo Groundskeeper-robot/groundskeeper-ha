@@ -83,7 +83,8 @@ async def _options_changed(hass: HomeAssistant, entry: GroundskeeperConfigEntry)
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: GroundskeeperConfigEntry) -> bool:
-    """Unload the entities and close the live feed."""
-    if entry.runtime_data.live:
+    """Unload the entities, then close the live feed (it keeps feeding them if they failed to unload)."""
+    unloaded = await hass.config_entries.async_unload_platforms(entry, entry.runtime_data.platforms)
+    if unloaded and entry.runtime_data.live:
         await entry.runtime_data.live.stop()
-    return await hass.config_entries.async_unload_platforms(entry, entry.runtime_data.platforms)
+    return unloaded

@@ -163,7 +163,10 @@ class GroundskeeperClient:
         content type. Raises CannotConnect when the panel does not answer."""
         try:
             async with self._session.get(
-                f"{self.url}{path}", headers=self._headers, timeout=aiohttp.ClientTimeout(total=REQUEST_TIMEOUT_S)
+                f"{self.url}{path}",
+                headers=self._headers,
+                timeout=aiohttp.ClientTimeout(total=REQUEST_TIMEOUT_S),
+                allow_redirects=False,  # only the checked path: a redirect must not carry the token elsewhere
             ) as resp:
                 return resp.status, await resp.read(), resp.headers.get("Content-Type")
         except (aiohttp.ClientError, TimeoutError) as err:

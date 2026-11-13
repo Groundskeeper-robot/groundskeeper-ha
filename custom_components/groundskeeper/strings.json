@@ -42,7 +42,7 @@
     "step": {
       "init": {
         "title": "What to follow live",
-        "description": "The Groundskeeper card's map and follow camera use the panel's live feed. Their data goes only to the card, never into Home Assistant's history. The device tracker does keep the robot's position in history, so it is off unless you switch it on.",
+        "description": "The Groundskeeper card's map and follow camera use the panel's live feed. The map and the robot's position go only to the card, never into Home Assistant's history. The follow camera's name is a sensor, so it is recorded. The device tracker keeps the robot's position in history, so it is off unless you switch it on.",
         "data": {
           "map": "Map",
           "follow_camera": "Follow camera",
