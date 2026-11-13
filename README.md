@@ -83,9 +83,10 @@ tiles and the yard photo.
 
 The robot's serial number never reaches Home Assistant: the panel names the robot by a hash of it. Its location
 reaches Home Assistant's database only if you switch the **Device tracker** on, and then only the tracker's
-coordinates. The summary carries no position, map or camera data. The map and live position go only to the card, over Home Assistant's websocket, and are never written to an
-entity, so the recorder keeps no history of them. The device tracker is off by default because a tracker's position
-is recorded. **Download diagnostics** leaves out the token, the panel's address, the serial and the position.
+coordinates. The summary carries no position, map or camera data. The map and live position go only to the card, over
+Home Assistant's websocket, and are never written to an entity, so the recorder keeps no history of them. The device
+tracker is off by default because a tracker's position is recorded. **Download diagnostics** leaves out the token, the
+panel's address, the serial and the position.
 
 ## Development
 
