@@ -13,8 +13,8 @@ Independent community project, not affiliated with Yarbo.
 
 ## What you need
 
-- A Groundskeeper panel, version **0.20.0 or later** (it has the Home Assistant summary, `GET /api/ha/summary`, and reaches the robot
-  through the Yarbo cloud).
+- A Groundskeeper panel, version **0.20.0 or later** (it has the Home Assistant summary, `GET /api/ha/summary`,
+  and reaches the robot through the Yarbo cloud).
 - Home Assistant 2026.3 or later, with HACS.
 - Home Assistant must be able to reach the panel's address on your network.
 
