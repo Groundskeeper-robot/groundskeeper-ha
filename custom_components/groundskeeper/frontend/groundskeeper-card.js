@@ -304,7 +304,8 @@ class GroundskeeperCard extends HTMLElement {
 
   _onState(s) {
     this._live = s;
-    if (s.position && (!this._pose || (s.position.t || 0) >= (this._pose.t || 0))) this._pose = s.position;
+    if (s.position === null) this._pose = null;          // no fix now: the last pose is not where it is
+    else if (s.position && (!this._pose || (s.position.t || 0) >= (this._pose.t || 0))) this._pose = s.position;
     if (this._config.show_map && !this._mapOff) {
       // Not read yet, or the last try failed: ask again, at most every RETRY_MS.
       if (!this._map && !this._loadingMap && Date.now() - this._mapTried >= RETRY_MS) this._loadMap();
