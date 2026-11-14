@@ -15,7 +15,8 @@ Independent community project, not affiliated with Yarbo.
 ## What you need
 
 - A Groundskeeper panel, version **0.20.0 or later** (it has the Home Assistant summary, `GET /api/ha/summary`,
-  and reaches the robot through the Yarbo cloud).
+  and reaches the robot through the Yarbo cloud). The live feed needs 0.20.1; the 3D model's tilt and speed need
+  the panel release after 0.20.1, and until then it sits level.
 - Home Assistant 2026.3 or later, with HACS.
 - Home Assistant must be able to reach the panel's address on your network.
 
@@ -66,8 +67,8 @@ HACS, not a missing file.
 
 ## Live: follow camera, map and position
 
-Besides the 30-second summary, the integration keeps the panel's live feed open (`GET /api/ha/stream`, in the panel
-release after 0.20.0; with an older panel the rest works and these wait). **Settings → Devices & services →
+Besides the 30-second summary, the integration keeps the panel's live feed open (`GET /api/ha/stream`, in panel
+0.20.1; with an older panel the rest works and these wait). **Settings → Devices & services →
 Groundskeeper → Configure** chooses what it follows:
 
 | Option | Default | What you get |
