@@ -184,6 +184,8 @@ class GroundskeeperCard extends HTMLElement {
     this._stop();
     this._resize?.disconnect();
     this._drop3d();             // its WebGL context goes with it; it is drawn again when the card comes back
+    clearTimeout(this._g3Again);
+    this._g3Again = null;
   }
 
   getCardSize() {
@@ -404,6 +406,7 @@ class GroundskeeperCard extends HTMLElement {
     if (!s.position) this._pose = null;                  // no fix (or no map): the last pose is not where it is
     else if (!this._pose || (s.position.t || 0) >= (this._pose.t || 0)) this._pose = s.position;
     if (s.position) this._g3?.take(s.position);
+    else this._g3?.clear();
     if (this._config.show_map && !this._mapOff) {
       // Not read yet, or the last try failed: ask again, at most every RETRY_MS.
       if (!this._map && !this._loadingMap && Date.now() - this._mapTried >= RETRY_MS) this._loadMap();
@@ -1017,6 +1020,11 @@ class GroundskeeperCard extends HTMLElement {
     this._g3Fail = { why, at: Date.now() };
     this._setNote(`No 3D view: ${why}. Showing the flat map.`, "3d");
     this._drawMap();
+    clearTimeout(this._g3Again);                          // try 3D again later, if it is still wanted then
+    this._g3Again = setTimeout(() => {
+      this._g3Again = null;
+      if (this.isConnected && this._built && this._map && !this._g3Token && this._want3d()) this._drawMap();
+    }, GROUND_RETRY_MS + 1000);
   }
 
   _drop3d() {
@@ -1549,6 +1557,14 @@ class Yard3D {
     this._kick();
   }
 
+  /* No position now (no fix): the model goes, as the flat map's marker does, until the next sample. */
+  clear() {
+    if (!this.pose && !this.fix) return;
+    this.pose = this.fix = this.held = null;
+    if (this.follow.on) this.setFollow(false);
+    if (this.ready) this.map.triggerRepaint();
+  }
+
   /* The speed gate: a sample further from the last than the robot could have driven is held, not drawn; the next
    * one decides whether the robot really moved there (taken) or it was a stray (dropped). */
   _gate(s, t, now) {
@@ -1609,7 +1625,9 @@ class Yard3D {
     p.heading += turn * e;
     p.pitch += (f.pitch - p.pitch) * e;
     p.roll += (f.roll - p.roll) * e;
-    let busy = err > 0.01 || Math.abs(turn) > 0.3 || ((now - f.at) / 1000 < R3.AHEAD_S && Math.abs(f.speed) > 0.03);
+    let busy = err > 0.01 || Math.abs(turn) > 0.3
+      || Math.abs(f.pitch - p.pitch) > 0.1 || Math.abs(f.roll - p.roll) > 0.1
+      || ((now - f.at) / 1000 < R3.AHEAD_S && Math.abs(f.speed) > 0.03);
     if (this.follow.on && this._followFrame(dt)) busy = true;
     this.map.triggerRepaint();
     if (busy) this.raf = requestAnimationFrame((ts) => this._tick(ts));
