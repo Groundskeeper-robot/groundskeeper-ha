@@ -239,3 +239,16 @@ def test_a_tile_is_kept_only_with_a_lifetime():
     assert may_keep("max-age=86400") and may_keep("public, max-age=60")
     for cache in (None, "", "no-store", "max-age=0", "no-cache, max-age=86400", "max-age=86400, no-store", "max-age=x"):
         assert not may_keep(cache), cache
+
+
+def test_the_card_takes_its_3d_libraries_only_from_the_integration():
+    """The card loads MapLibre and three.js from the addresses groundskeeper/ground gives (the pinned views), by name,
+    and fetches nothing from anywhere else."""
+    import re
+    from pathlib import Path
+
+    card = (Path(api.__file__).parent / "frontend" / "groundskeeper-card.js").read_text(encoding="utf-8")
+    for name in VENDOR:
+        assert "vendor[name]" in card and f'"{name}"' in card, name
+    urls = set(re.findall(r"https?://[^\s\"'`]+", card))
+    assert urls == {"http://www.w3.org/2000/svg", "https://github.com/Groundskeeper-robot/groundskeeper-ha"}
