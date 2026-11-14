@@ -8,6 +8,7 @@ the panel decides, with its Control switch and its checks.
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
+import hashlib
 import json
 import math
 import re
@@ -20,6 +21,10 @@ from .const import (
     COMMANDS,
     CONTROL_PREVIEW_PATH,
     CONTROL_SEND_PATH,
+    FILE_MAX_BYTES,
+    GROUND_PATH,
+    GROUND_TILE_MAX_BYTES,
+    GROUND_TIMEOUT_S,
     IMAGERY_PATH,
     LIVE_API,
     LIVE_PATH,
@@ -29,6 +34,8 @@ from .const import (
     REQUEST_TIMEOUT_S,
     SUMMARY_API,
     SUMMARY_PATH,
+    VENDOR,
+    VENDOR_MAX_BYTES,
 )
 
 
@@ -52,6 +59,10 @@ class UnsupportedApi(GroundskeeperError):
     """The panel speaks a newer summary than this integration knows."""
 
 
+class NoGround(GroundskeeperError):
+    """The panel has no ground for the 3D view yet (no lidar there, or nothing read)."""
+
+
 class CommandRejected(GroundskeeperError):
     """The panel turned the request down before its checks (a 400: a missing plan, say)."""
 
@@ -69,6 +80,54 @@ def command_body(cmd: str, plan_id: int | None) -> dict[str, Any]:
             raise ValueError("start_plan needs a plan")
         return {"cmd": cmd, "args": {"plan_id": plan_id}}
     return {"cmd": cmd, "args": {}}
+
+
+GROUND_VERSION = re.compile(r"[0-9a-f]{1,40}")
+
+
+def _finite(v: Any) -> bool:
+    return isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)
+
+
+def ground_meta(data: Any) -> dict[str, Any]:
+    """The panel's ground for the 3D view, checked and cut to what the card needs. Raises CannotConnect if it is not
+    of the expected shape."""
+    if not isinstance(data, dict):
+        raise CannotConnect("the ground is not a JSON object")
+    version, bounds = data.get("version"), data.get("bounds")
+    lo, hi = data.get("minzoom"), data.get("maxzoom")
+    if not (isinstance(version, str) and GROUND_VERSION.fullmatch(version)):
+        raise CannotConnect("the ground has no version")
+    if not (isinstance(bounds, list) and len(bounds) == 4 and all(_finite(b) for b in bounds)):
+        raise CannotConnect("the ground has no bounds")
+    if not all(isinstance(z, int) and not isinstance(z, bool) and 0 <= z <= 24 for z in (lo, hi)) or lo > hi:
+        raise CannotConnect("the ground has no zooms")
+    if data.get("encoding") != "terrarium":
+        raise CannotConnect("the ground is in an encoding the card cannot read")
+    relief = data.get("relief_m")
+    sources = data.get("sources")
+    return {
+        "version": version,
+        "bounds": bounds,
+        "minzoom": lo,
+        "maxzoom": hi,
+        "relief_m": relief if _finite(relief) else None,
+        "sources": [s for s in sources if isinstance(s, str)] if isinstance(sources, list) else [],
+        "encoding": "terrarium",
+    }
+
+
+def may_keep(cache_control: str | None) -> bool:
+    """Whether the panel's Cache-Control lets a browser keep a ground tile: a max-age above zero, and no no-store or
+    no-cache. Anything else (no header, max-age=0, a must-revalidate policy) is not kept."""
+    directives = {}
+    for part in (cache_control or "").lower().split(","):
+        key, _, value = part.strip().partition("=")
+        directives[key] = value.strip().strip('"')
+    if "no-store" in directives or "no-cache" in directives:
+        return False
+    age = directives.get("max-age", "")
+    return age.isascii() and age.isdigit() and int(age) > 0
 
 
 def normalize_url(url: str) -> str:
@@ -121,10 +180,10 @@ class GroundskeeperClient:
     def _headers(self) -> dict[str, str]:
         return {"Authorization": f"Bearer {self._token}"}
 
-    async def _get_json(self, path: str) -> Any:
+    async def _get_json(self, path: str, timeout: float = REQUEST_TIMEOUT_S) -> Any:
         try:
             async with self._session.get(
-                f"{self.url}{path}", headers=self._headers, timeout=aiohttp.ClientTimeout(total=REQUEST_TIMEOUT_S)
+                f"{self.url}{path}", headers=self._headers, timeout=aiohttp.ClientTimeout(total=timeout)
             ) as resp:
                 if resp.status in (401, 403):
                     raise InvalidAuth
@@ -259,19 +318,64 @@ class GroundskeeperClient:
         except (aiohttp.ClientError, TimeoutError) as err:
             raise CannotConnect(str(err) or type(err).__name__) from err
 
-    async def file(self, path: str) -> tuple[int, bytes, str | None]:
-        """A tile or the yard photo for the card, by its panel path (checked by the caller): status, body and
-        content type. Raises CannotConnect when the panel does not answer."""
+    async def file(
+        self, path: str, timeout: float = REQUEST_TIMEOUT_S, max_bytes: int = FILE_MAX_BYTES
+    ) -> tuple[int, bytes, str | None, str | None]:
+        """A tile, the yard photo or a library for the card, by its panel path (checked by the caller): status, body,
+        content type and cache header. Raises CannotConnect when the panel does not answer, or sends more than
+        `max_bytes`."""
         try:
             async with self._session.get(
                 f"{self.url}{path}",
                 headers=self._headers,
-                timeout=aiohttp.ClientTimeout(total=REQUEST_TIMEOUT_S),
+                timeout=aiohttp.ClientTimeout(total=timeout),
                 allow_redirects=False,  # only the checked path: a redirect must not carry the token elsewhere
             ) as resp:
-                return resp.status, await resp.read(), resp.headers.get("Content-Type")
+                length = resp.headers.get("Content-Length", "")
+                if length.isascii() and length.isdigit() and int(length) > max_bytes:
+                    raise CannotConnect("the panel sent more than a file for the card can be")
+                chunks, size = [], 0
+                async for chunk in resp.content.iter_chunked(65536):
+                    size += len(chunk)
+                    if size > max_bytes:
+                        raise CannotConnect("the panel sent more than a file for the card can be")
+                    chunks.append(chunk)
+                body = b"".join(chunks)
+                return resp.status, body, resp.headers.get("Content-Type"), resp.headers.get("Cache-Control")
         except (aiohttp.ClientError, TimeoutError) as err:
             raise CannotConnect(str(err) or type(err).__name__) from err
+
+    async def ground(self) -> dict[str, Any]:
+        """The ground for the card's 3D view (see ground_meta). The first read after a panel starts can wait on a
+        lidar download. Raises NoGround when the panel has none."""
+        try:
+            data = await self._get_json(GROUND_PATH, timeout=GROUND_TIMEOUT_S)
+        except PanelTooOld as err:  # the route is older than the summary; a 404 here is the panel's "no terrain"
+            raise NoGround from err
+        return ground_meta(data)
+
+    async def ground_tile(self, z: int, x: int, y: int, version: str | None) -> tuple[int, bytes, bool]:
+        """One Terrarium tile of the ground: status, body, and whether it is of the ground `version` names (the panel
+        says so with its cache header: an older version's address gets the new ground, not to be kept)."""
+        path = f"{GROUND_PATH}/{int(z)}/{int(x)}/{int(y)}.png"
+        if version is not None:
+            if not GROUND_VERSION.fullmatch(version):
+                raise ValueError(version)
+            path += f"?v={version}"
+        status, body, _ctype, cache = await self.file(path, timeout=GROUND_TIMEOUT_S, max_bytes=GROUND_TILE_MAX_BYTES)
+        return status, body, may_keep(cache)
+
+    async def vendor(self, name: str) -> bytes:
+        """One of the panel's libraries for the card's 3D view, only with the exact contents VENDOR names. Raises
+        ValueError for a name not in VENDOR, CannotConnect for anything but those contents."""
+        if name not in VENDOR:
+            raise ValueError(name)
+        status, body, _ctype, _cache = await self.file(f"/vendor/{name}", max_bytes=VENDOR_MAX_BYTES)
+        if status != 200:
+            raise CannotConnect(f"the panel answered {status} for {name}")
+        if hashlib.sha256(body).hexdigest() != VENDOR[name][1]:
+            raise CannotConnect(f"the panel's {name} is not the version this integration knows")
+        return body
 
     async def frigate_stream(self, camera: str) -> aiohttp.ClientResponse:
         """The panel's live MJPEG of one Frigate camera. The caller closes the response."""
@@ -299,7 +403,7 @@ class GroundskeeperClient:
         path = f"/api/frigate/snapshot/{quote(camera)}.jpg"
         if height:
             path += f"?height={int(height)}"
-        status, body, _ = await self.file(path)
+        status, body, *_ = await self.file(path)
         return body if status == 200 else None
 
     async def summary(self) -> dict[str, Any]:

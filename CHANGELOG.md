@@ -11,6 +11,9 @@
 - **Controls on the card** (`show_controls`, with Commands on): Start (pick a plan, see the panel's checks, start
   only when it would), Pause, Stop and Dock at once, Resume on a second tap; which show follows the mower's state.
 - The card shows a live preview in the dashboard's card picker, and the README has a screenshot of it.
+- **Ground for a 3D view** (Map option): websocket `groundskeeper/ground` (the panel's ground: version, bounds,
+  zooms, relief) and views for its Terrarium tiles and for the panel's MapLibre GL and three.js, which pass only with
+  the contents of the pinned versions. The card's 3D view itself comes next.
 
 ### Changed
 - README: one-click buttons to open the repository in the Marketplace (HACS before Home Assistant 2026.11) and

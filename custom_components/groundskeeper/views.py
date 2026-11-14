@@ -1,15 +1,20 @@
-"""Imagery for the Groundskeeper card's map: the panel's tiles and yard photo, passed through Home Assistant.
+"""Files for the Groundskeeper card's map, passed through Home Assistant: the panel's imagery tiles and yard photo,
+and for the 3D view its ground tiles and the two libraries that draw it.
 
 A browser cannot hold the integration's token, so the card asks Home Assistant (signed in as the person) and the
-integration fetches from the panel. Only these two kinds of file pass; every other panel path is refused here.
+integration fetches from the panel. Only these kinds of file pass; every other panel path is refused here. All of
+them need the Map option.
 
 - GET /api/groundskeeper/{entry_id}/tiles/{world|src}/{z}/{x}/{y}.jpg
 - GET /api/groundskeeper/{entry_id}/imagery/{name}
+- GET /api/groundskeeper/{entry_id}/ground/{z}/{x}/{y}.png?v={version}: Terrarium elevation tiles
+- GET /api/groundskeeper/{entry_id}/vendor/{name}: MapLibre and three.js, only with the contents VENDOR names
 """
 
 from __future__ import annotations
 
 from http import HTTPStatus
+import re
 
 from aiohttp import web
 
@@ -18,11 +23,12 @@ from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.http import KEY_HASS
 
-from .api import IMAGERY_NAME, TILE_KINDS, GroundskeeperError
-from .const import CONF_MAP, DOMAIN
+from .api import GROUND_VERSION, IMAGERY_NAME, TILE_KINDS, GroundskeeperError
+from .const import CONF_MAP, DOMAIN, VENDOR
 from .coordinator import options
 
 MAX_ZOOM = 24
+TILE_NUMBER = re.compile(r"[0-9]{1,8}")
 # What a tile or the yard photo may be served as. Anything else the panel says is replaced: a compromised panel (or a
 # cleartext connection someone sits on) must not get an HTML page served from Home Assistant's own address.
 IMAGE_TYPES = ("image/jpeg", "image/png", "image/webp")
@@ -37,6 +43,8 @@ def photo_name_ok(name: str) -> bool:
 def async_register(hass: HomeAssistant) -> None:
     hass.http.register_view(TileView())
     hass.http.register_view(YardPhotoView())
+    hass.http.register_view(GroundTileView())
+    hass.http.register_view(VendorView())
 
 
 def _client(hass: HomeAssistant, entry_id: str):
@@ -53,7 +61,7 @@ async def _pass(hass: HomeAssistant, entry_id: str, path: str, cache: str) -> we
     if client is None:
         return web.Response(status=HTTPStatus.NOT_FOUND)
     try:
-        status, body, ctype = await client.file(path)
+        status, body, ctype, _cache = await client.file(path)
     except GroundskeeperError:
         return web.Response(status=HTTPStatus.BAD_GATEWAY)
     if status == HTTPStatus.NO_CONTENT:  # the panel has no tile there
@@ -68,17 +76,26 @@ async def _pass(hass: HomeAssistant, entry_id: str, path: str, cache: str) -> we
     )
 
 
+def _tile(z: str, x: str, y: str) -> tuple[int, int, int] | None:
+    """A tile address on the world's grid, or None."""
+    if not all(TILE_NUMBER.fullmatch(n) for n in (z, x, y)):
+        return None
+    zi, xi, yi = int(z), int(x), int(y)
+    if zi > MAX_ZOOM or xi >= 2**zi or yi >= 2**zi:
+        return None
+    return zi, xi, yi
+
+
 class TileView(HomeAssistantView):
     url = "/api/groundskeeper/{entry_id}/tiles/{kind}/{z}/{x}/{y}.jpg"
     name = "api:groundskeeper:tiles"
     requires_auth = True
 
     async def get(self, request: web.Request, entry_id: str, kind: str, z: str, x: str, y: str) -> web.Response:
-        if kind not in TILE_KINDS or not (z.isdigit() and x.isdigit() and y.isdigit()):
+        tile = _tile(z, x, y)
+        if kind not in TILE_KINDS or tile is None:
             return web.Response(status=HTTPStatus.NOT_FOUND)
-        zi, xi, yi = int(z), int(x), int(y)
-        if zi > MAX_ZOOM or xi >= 2**zi or yi >= 2**zi:
-            return web.Response(status=HTTPStatus.NOT_FOUND)
+        zi, xi, yi = tile
         return await _pass(
             request.app[KEY_HASS], entry_id, f"/tiles/{kind}/{zi}/{xi}/{yi}.jpg", "private, no-store"
         )
@@ -93,3 +110,69 @@ class YardPhotoView(HomeAssistantView):
         if not photo_name_ok(name):
             return web.Response(status=HTTPStatus.NOT_FOUND)
         return await _pass(request.app[KEY_HASS], entry_id, f"/imagery/{name}", "private, no-store")
+
+
+class GroundTileView(HomeAssistantView):
+    """The 3D view's ground, one Terrarium tile at a time. `v` is the ground version the card read: a tile of that
+    ground may be kept a day; asked under an older version, the panel sends the new ground and it is not kept."""
+
+    url = "/api/groundskeeper/{entry_id}/ground/{z}/{x}/{y}.png"
+    name = "api:groundskeeper:ground"
+    requires_auth = True
+
+    async def get(self, request: web.Request, entry_id: str, z: str, x: str, y: str) -> web.Response:
+        tile = _tile(z, x, y)
+        version = request.query.get("v")
+        if tile is None or (version is not None and not GROUND_VERSION.fullmatch(version)):
+            return web.Response(status=HTTPStatus.NOT_FOUND)
+        client = _client(request.app[KEY_HASS], entry_id)
+        if client is None:
+            return web.Response(status=HTTPStatus.NOT_FOUND)
+        try:
+            status, body, keep = await client.ground_tile(*tile, version)
+        except GroundskeeperError:
+            return web.Response(status=HTTPStatus.BAD_GATEWAY)
+        if status != HTTPStatus.OK or _client(request.app[KEY_HASS], entry_id) is None:  # or the map switched off
+            return web.Response(status=HTTPStatus.NOT_FOUND)
+        return web.Response(
+            body=body,
+            content_type="image/png",
+            headers={
+                "Cache-Control": "private, max-age=86400" if keep and version else "private, no-store",
+                "X-Content-Type-Options": "nosniff",
+            },
+        )
+
+
+class VendorView(HomeAssistantView):
+    """MapLibre and three.js for the 3D view, from the panel, with the exact contents VENDOR names (see const.py).
+    Kept in memory once checked: the same bytes whichever panel sent them."""
+
+    url = "/api/groundskeeper/{entry_id}/vendor/{name}"
+    name = "api:groundskeeper:vendor"
+    requires_auth = True
+
+    def __init__(self) -> None:
+        self._checked: dict[str, bytes] = {}
+
+    async def get(self, request: web.Request, entry_id: str, name: str) -> web.Response:
+        if name not in VENDOR:
+            return web.Response(status=HTTPStatus.NOT_FOUND)
+        client = _client(request.app[KEY_HASS], entry_id)
+        if client is None:
+            return web.Response(status=HTTPStatus.NOT_FOUND)
+        body = self._checked.get(name)
+        if body is None:
+            try:
+                body = await client.vendor(name)
+            except GroundskeeperError:
+                return web.Response(status=HTTPStatus.BAD_GATEWAY)
+            self._checked[name] = body
+            if _client(request.app[KEY_HASS], entry_id) is None:  # the map was switched off meanwhile
+                return web.Response(status=HTTPStatus.NOT_FOUND)
+        return web.Response(
+            body=body,
+            content_type=VENDOR[name][0],
+            charset="utf-8",
+            headers={"Cache-Control": "private, max-age=86400", "X-Content-Type-Options": "nosniff"},
+        )

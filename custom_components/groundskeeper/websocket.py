@@ -12,6 +12,9 @@ own sign-in decides who sees the map. What these commands send is never written 
   whether the feed is connected), then each `state`, `pose`, `connection` and `stale` event as it comes. A `closed`
   event ends it: the entry unloaded or reloaded (an option changed), and the card subscribes again if it wants.
   Without the Map option the robot's position is left out of everything sent.
+- `groundskeeper/ground` {entry_id}: the ground for the card's 3D view: its version, bounds, zooms and relief, the
+  address of its tiles on this integration's ground view, and of the libraries on its vendor view. Map option. The
+  first ask after the panel starts can take a while (it may download lidar). `no_ground`: the panel has none.
 - `groundskeeper/plans` {entry_id}: the robot's plans ({id, name}) for the card's Start. Commands option.
 - `groundskeeper/preview` {entry_id, cmd, plan_id?}: would the panel send this now: its checks and why not, nothing
   sent. Commands option.
@@ -36,14 +39,15 @@ from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 
 from . import commands
-from .api import IMAGERY_NAME, CommandRejected, GroundskeeperError
-from .const import COMMANDS, CONF_MAP, DOMAIN
+from .api import IMAGERY_NAME, CommandRejected, GroundskeeperError, NoGround
+from .const import COMMANDS, CONF_MAP, DOMAIN, VENDOR
 from .coordinator import GroundskeeperCoordinator, options
 
 
 @callback
 def async_register(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_map)
+    websocket_api.async_register_command(hass, ws_ground)
     websocket_api.async_register_command(hass, ws_subscribe)
     websocket_api.async_register_command(hass, ws_track)
     websocket_api.async_register_command(hass, ws_plans)
@@ -95,6 +99,40 @@ async def ws_map(hass: HomeAssistant, connection: websocket_api.ActiveConnection
         connection.send_error(msg["id"], "panel_unavailable", f"The panel did not give its map ({type(err).__name__})")
         return
     connection.send_result(msg["id"], {**data, "yard": yard_for_card(data.get("yard"), msg["entry_id"])})
+
+
+@websocket_api.websocket_command({vol.Required("type"): "groundskeeper/ground", vol.Required("entry_id"): str})
+@websocket_api.async_response
+async def ws_ground(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]) -> None:
+    coordinator = _coordinator(hass, connection, msg)
+    if coordinator is None:
+        return
+    if not options(coordinator.config_entry)[CONF_MAP]:
+        connection.send_error(msg["id"], "map_off", "The map is switched off in the integration's options")
+        return
+    try:
+        ground = await coordinator.client.ground()
+    except NoGround:
+        connection.send_error(msg["id"], "no_ground", "The panel has no ground for the 3D view here yet")
+        return
+    except GroundskeeperError as err:
+        connection.send_error(
+            msg["id"], "panel_unavailable", f"The panel did not give its ground ({type(err).__name__})"
+        )
+        return
+    if not options(coordinator.config_entry)[CONF_MAP]:  # switched off while the panel answered
+        connection.send_error(msg["id"], "map_off", "The map is switched off in the integration's options")
+        return
+    base = f"/api/groundskeeper/{msg['entry_id']}"
+    connection.send_result(
+        msg["id"],
+        {
+            **ground,
+            "tiles": f"{base}/ground/{{z}}/{{x}}/{{y}}.png?v={ground['version']}",
+            # The pin in the address: a release with new libraries is never served an old one from a browser's cache.
+            "vendor": {name: f"{base}/vendor/{name}?h={pin[:12]}" for name, (_type, pin) in VENDOR.items()},
+        },
+    )
 
 
 @websocket_api.websocket_command(
