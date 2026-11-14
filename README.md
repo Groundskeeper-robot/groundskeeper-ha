@@ -147,7 +147,7 @@ Options (all in the visual editor):
 | `show_status`, `show_controls`, `show_map`, `show_camera` | `true` | Which parts to show (controls: Commands on) |
 | `camera` | `auto` | `auto`: Frigate's own entity when there is one; `integration`: always through the panel |
 | `map_height` | `320` | The map's height in pixels |
-| `view` | `2d` | `2d`: the flat map; `3d`: 3D on the yard's ground; `3d_during_runs`: 3D while a run is on, flat otherwise |
+| `view` | `2d` | `2d`: the flat map; `3d`: 3D on the yard's ground; `3d_during_runs`: 3D while a run is on, flat otherwise (the map's 3D / 2D button changes it until the next run starts or ends) |
 | `ground_height` | `2` | How much taller the 3D view draws the ground: `1`, `1.5`, `2` or `3` |
 
 Without the Commands option the card only reads. It talks to Home Assistant, never to the panel.

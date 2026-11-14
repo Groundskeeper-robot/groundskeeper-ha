@@ -163,6 +163,7 @@ class GroundskeeperCard extends HTMLElement {
   set hass(hass) {
     const first = !this._hass;
     this._hass = hass;
+    LIBS.hass = hass;
     if (this._notes.robot && this._device()) {        // the robot turned up after the card was drawn
       this._clearNote("robot");
       this._built = false;
@@ -295,6 +296,7 @@ class GroundskeeperCard extends HTMLElement {
     this._stop();
     this._drop3d();
     this._g3Fail = null;
+    this._clearNote("3d");
     this._live = this._pose = this._map = this._mapError = null;
     this._mapSha = undefined;
     this._mapOff = false;
@@ -413,6 +415,7 @@ class GroundskeeperCard extends HTMLElement {
     if (run !== this._track.run) {                        // a new run, or none: draw what belongs now
       const ended = this._track.run !== null;
       this._track = { run, points: [], since: 0, busy: false, at: 0 };
+      if (this._config.view === "3d_during_runs") this._viewPick = null;   // the button's pick lasts one run (or gap)
       if (ended && this._g3) this._refreshGround();       // the run may have added heights
       if (this._map && this._want3d() !== !!this._g3Token) this._drawMap();   // 3D during runs
       else this._drawTrack();
@@ -487,6 +490,7 @@ class GroundskeeperCard extends HTMLElement {
   /* -- rendering ------------------------------------------------------------------------------------------------- */
   _render() {
     if (!this._hass) return;
+    this._drop3d();                                       // its container goes with the old content
     const c = this._config;
     const root = this.shadowRoot;
     root.replaceChildren();
@@ -851,6 +855,7 @@ class GroundskeeperCard extends HTMLElement {
       return;
     }
     this._drop3d();
+    if (!this._g3Fail) this._clearNote("3d");
     const proj = (this._proj = new Projection(m.bounds));
     const fit = proj.box(m.bounds);
     this._fitBox = { x: fit.x - PAD_M, y: fit.y - PAD_M, w: fit.w + 2 * PAD_M, h: fit.h + 2 * PAD_M };
@@ -904,7 +909,7 @@ class GroundskeeperCard extends HTMLElement {
   }
 
   /* The map's buttons: 3D or flat, the 3D ground's height, and follow the robot. */
-  _mapTools(three) {
+  _mapTools(three, ready = true) {
     const tools = el("div", { class: "tools" });
     tools.append(el("button", {
       class: "tool", text: three ? "2D" : "3D",
@@ -917,6 +922,7 @@ class GroundskeeperCard extends HTMLElement {
         this._drawMap();
       },
     }));
+    if (!ready) return tools;                             // loading: only the way back to the flat map
     if (three) {
       const now = this._height();
       tools.append(el("select", {
@@ -960,10 +966,11 @@ class GroundskeeperCard extends HTMLElement {
   async _draw3d() {
     const wrap = this._mapWrap, m = this._map, entry = this._entryId();
     this._drop3d();
+    if (!this.isConnected) return;                        // drawn when the card is on the page again
     const token = (this._g3Token = {});
     this._svg = this._robotG = this._trackG = null;
     this._resize?.disconnect();
-    wrap.replaceChildren(el("div", { class: "empty", text: "Loading the 3D view…" }));
+    wrap.replaceChildren(el("div", { class: "empty", text: "Loading the 3D view…" }), this._mapTools(true, false));
     let ground, libs;
     try {
       if (!hasWebGL()) throw new Error("this browser cannot draw 3D (no WebGL)");
@@ -980,16 +987,22 @@ class GroundskeeperCard extends HTMLElement {
       return;
     }
     if (token !== this._g3Token || this._map !== m) return;     // switched off, or a new map, meanwhile
+    if (!this.isConnected || wrap !== this._mapWrap) {             // taken off the page, or drawn anew
+      if (token === this._g3Token) this._g3Token = null;
+      return;
+    }
     const box = el("div", { class: "gl" });
     wrap.replaceChildren(el("style", { text: libs.css }), box, this._mapTools(true));
     try {
-      this._g3 = new Yard3D({
-        container: box, libs, ground, map: m, height: this._height(), hass: () => this._hass,
+      const g3 = new Yard3D({
+        container: box, libs, ground, map: m, height: this._height(),
         onFollow: (on) => {
           this._follow = on;
           this._followBtn?.setAttribute("aria-pressed", String(on));
         },
+        onFail: (why) => { if (this._g3 === g3) this._fail3d(why); },
       });
+      this._g3 = g3;
     } catch (err) {
       this._fail3d(err?.message || "it could not be drawn");
       return;
@@ -1177,17 +1190,27 @@ const R3 = {
 const MODEL = { body: "#2A2D30", frame: "#4A5055", track: "#17191A", trim: "#F2C01E", stop: "#D8322B",
   light: "#F4F7FA" };
 const GROUND_RETRY_MS = 5 * 60 * 1000;                   // 3D failed: try again after this long (or on a tap)
+const TRACK_3D_MS = 500;                                 // the 3D track is sent to MapLibre at most this often
+const viaHass = (path) => `${PROTOCOL}://${path}`;       // a Home Assistant path, fetched signed in
 const metres = (lat) => [111320 * Math.cos(lat * DEG), 111320];
 const angle = (a) => ((a % 360) + 540) % 360 - 180;     // -180..180
-const LIBS = { promise: null };
+const LIBS = { promise: null, hass: null };              // hass: the newest card's, for the gk:// protocol
+const PROTOCOL = "gk";
+let WEBGL = null;
 
+/* Whether this browser can draw 3D: asked once, and the probe's context let go at once (browsers keep only a few). */
 function hasWebGL() {
-  try {
-    const c = document.createElement("canvas");
-    return !!(c.getContext("webgl2") || c.getContext("webgl"));
-  } catch (_) {
-    return false;
+  if (WEBGL === null) {
+    try {
+      const c = document.createElement("canvas");
+      const gl = c.getContext("webgl2") || c.getContext("webgl");
+      WEBGL = !!gl;
+      gl?.getExtension("WEBGL_lose_context")?.loseContext();
+    } catch (_) {
+      WEBGL = false;
+    }
   }
+  return WEBGL;
 }
 
 /* MapLibre (its script and style sheet) and three.js, through the integration (signed in), once per page. */
@@ -1201,20 +1224,33 @@ function loadLibs(hass, vendor) {
       };
       const [js, css, three] = await Promise.all([get("maplibre-gl.js", "text/javascript"),
         get("maplibre-gl.css", "text/css"), get("three.module.min.js", "text/javascript")]);
-      if (!window.maplibregl) {
-        const url = URL.createObjectURL(js);
-        try {
-          await new Promise((ok, fail) => {
-            const s = document.createElement("script");
-            s.src = url;
-            s.onload = ok;
-            s.onerror = () => fail(new Error("MapLibre did not load"));
-            document.head.append(s);
-          });
-        } finally {
-          URL.revokeObjectURL(url);
-        }
+      // Always the pinned copy, kept to the card: one another card put on the page stays theirs.
+      const theirs = window.maplibregl;
+      let maplibregl;
+      const jsUrl = URL.createObjectURL(js);
+      try {
+        await new Promise((ok, fail) => {
+          const s = document.createElement("script");
+          s.src = jsUrl;
+          s.onload = ok;
+          s.onerror = () => fail(new Error("MapLibre did not load"));
+          document.head.append(s);
+        });
+        maplibregl = window.maplibregl;
+      } finally {
+        URL.revokeObjectURL(jsUrl);
+        if (theirs) window.maplibregl = theirs;
       }
+      if (!maplibregl?.Map || maplibregl === theirs) throw new Error("MapLibre did not load");
+      // The ground's tiles and the photo are asked for through Home Assistant's own fetch, which renews an expired
+      // token first: a request with a stale one would count as a failed login.
+      maplibregl.addProtocol(PROTOCOL, async (params, abort) => {
+        const hass = LIBS.hass;
+        if (!hass) throw new Error("not signed in");
+        const r = await hass.fetchWithAuth(params.url.slice(PROTOCOL.length + 3), { signal: abort.signal });
+        if (!r.ok) throw new Error(`${r.status}`);
+        return { data: await r.arrayBuffer() };
+      });
       const url = URL.createObjectURL(three);
       let THREE;
       try {
@@ -1222,8 +1258,8 @@ function loadLibs(hass, vendor) {
       } finally {
         URL.revokeObjectURL(url);
       }
-      if (!window.maplibregl || !THREE?.WebGLRenderer) throw new Error("the 3D libraries did not load");
-      return { maplibregl: window.maplibregl, THREE, css: await css.text() };
+      if (!THREE?.WebGLRenderer) throw new Error("three.js did not load");
+      return { maplibregl, THREE, css: await css.text() };
     })();
     LIBS.promise.catch(() => { LIBS.promise = null; });  // a later try may work
   }
@@ -1337,14 +1373,13 @@ function buildRobot(THREE) {
   return { robot: g, mower };
 }
 
-/* One card's 3D map. `hass()` gives the card's current Home Assistant object (its token renews), `onFollow(on)` is
- * told when following stops or starts. */
+/* One card's 3D map. `onFollow(on)` is told when following stops or starts, `onFail(why)` when it cannot draw. */
 class Yard3D {
-  constructor({ container, libs, ground, map, height, hass, onFollow }) {
+  constructor({ container, libs, ground, map, height, onFollow, onFail }) {
     const ml = libs.maplibregl;
     this.libs = libs;
-    this.hass = hass;
     this.onFollow = onFollow;
+    this.onFail = onFail;
     this.ground = ground;
     this.x = height;
     this.fix = null;            // the last live sample: {lon, lat, heading, pitch, roll, speed, t, at}
@@ -1357,34 +1392,38 @@ class Yard3D {
     this.follow = { on: false, offset: R3.FOLLOW_SIDE, cam: null, turning: false, hands: false, wheelAt: 0 };
     const [w, s, e, n] = map.bounds;
     this.fit = [[w, s], [e, n]];
-    const origin = window.location.origin;
     this.map = new ml.Map({
       container, attributionControl: false, maxPitch: 80, pitch: 55, maxZoom: 23,
       bounds: this.fit, fitBoundsOptions: { padding: 24 },
       style: { version: 8, sources: {},
         layers: [{ id: "bg", type: "background", paint: { "background-color": "#1A1F1C" } }] },
-      // The ground's tiles and the photo come from Home Assistant: signed in, like every other request of the card.
-      transformRequest: (url) => (url.startsWith(`${origin}/api/`)
-        ? { url, headers: { Authorization: `Bearer ${this.hass()?.auth?.data?.access_token || ""}` } } : undefined),
     });
-    this.map.on("error", () => {});                   // a tile that did not come: the ground stays as it was
-    this.map.addControl(new ml.NavigationControl({ showZoom: false, visualizePitch: true }), "top-left");
-    this.map.on("load", () => this._layers(map));
-    this._renew();
-    this.renewTimer = setInterval(() => this._renew(), 30000);
-    this._gestures();
-  }
-
-  /* The token in the tiles' header lasts 30 minutes: renew it in time, as the frontend does for its own calls. */
-  _renew() {
-    const a = this.hass()?.auth;
-    if (a?.data?.expires && a.data.expires - Date.now() < 120000 && a.refreshAccessToken) {
-      a.refreshAccessToken().catch(() => {});
+    try {
+      // A tile that did not come leaves the ground as it was; anything else is said once, in the console.
+      this.map.on("error", (e) => { if (!e?.sourceId && !e?.tile) console.warn("Groundskeeper 3D:", e?.error); });
+      this.map.getCanvas().addEventListener("webglcontextlost", () => this._fail("the browser let the 3D view go"));
+      this.map.addControl(new ml.NavigationControl({ showZoom: false, visualizePitch: true }), "top-left");
+      this.map.on("load", () => {
+        try {
+          this._layers(map);
+        } catch (err) {
+          this._fail(err?.message || "the map could not be drawn");
+        }
+      });
+      this._gestures();
+    } catch (err) {
+      this.destroy();
+      throw err;
     }
   }
 
+  _fail(why) {
+    if (this.dead) return;
+    this.onFail(why);                                   // the card drops this map and shows the flat one
+  }
+
   _dem(g) {
-    return { type: "raster-dem", tiles: [window.location.origin + g.tiles], tileSize: 256, encoding: g.encoding,
+    return { type: "raster-dem", tiles: [viaHass(g.tiles)], tileSize: 256, encoding: g.encoding,
       minzoom: g.minzoom, maxzoom: g.maxzoom, bounds: g.bounds };
   }
 
@@ -1392,7 +1431,7 @@ class Yard3D {
     const mp = this.map;
     if (m.yard?.signed && Array.isArray(m.yard.bbox)) {
       const [w, s, e, n] = m.yard.bbox;
-      mp.addSource("gk-photo", { type: "image", url: window.location.origin + m.yard.signed,
+      mp.addSource("gk-photo", { type: "image", url: viaHass(m.yard.signed),
         coordinates: [[w, n], [e, n], [e, s], [w, s]] });
       mp.addLayer({ id: "gk-photo", type: "raster", source: "gk-photo",
         paint: { "raster-opacity": 0.95, "raster-fade-duration": 0 } });
@@ -1449,7 +1488,7 @@ class Yard3D {
     if (!this.ready) return;
     const mp = this.map;
     if (g.minzoom === old.minzoom && g.maxzoom === old.maxzoom && String(g.bounds) === String(old.bounds)) {
-      for (const id of ["gk-ground", "gk-shade"]) mp.getSource(id).setTiles([window.location.origin + g.tiles]);
+      for (const id of ["gk-ground", "gk-shade"]) mp.getSource(id).setTiles([viaHass(g.tiles)]);
       return;
     }
     mp.setTerrain(null);
@@ -1465,7 +1504,7 @@ class Yard3D {
   }
 
   /* The track, [t, lon, lat, rtk] rows (rtk -1: the live trail), as lines in its colours. */
-  setTrack(rows) {
+  _drawTrack(rows) {
     const features = [];
     let cur = null;
     for (const [, lon, lat, rtk] of rows) {
@@ -1480,6 +1519,17 @@ class Yard3D {
     }
     this.trackData = { type: "FeatureCollection", features: features.filter((f) => f.geometry.coordinates.length > 1) };
     if (this.ready) this.map.getSource("gk-track").setData(this.trackData);
+  }
+
+  /* The track, at most every TRACK_3D_MS: the live trail is sent whole on every sample. */
+  setTrack(rows) {
+    this.rows = rows;
+    if (this.trackTimer) return;
+    this._drawTrack(rows);
+    this.trackTimer = setTimeout(() => {
+      this.trackTimer = null;
+      if (!this.dead && this.rows !== rows) this._drawTrack(this.rows);
+    }, TRACK_3D_MS);
   }
 
   /* One position sample: {lon, lat, heading, pitch, roll, speed, t}, t the robot's own time. The same time again is
@@ -1693,7 +1743,7 @@ class Yard3D {
   destroy() {
     this.dead = true;
     cancelAnimationFrame(this.raf);
-    clearInterval(this.renewTimer);
+    clearTimeout(this.trackTimer);
     window.removeEventListener("pointerup", this._lift);
     window.removeEventListener("pointercancel", this._lift);
     window.removeEventListener("blur", this._blur);
