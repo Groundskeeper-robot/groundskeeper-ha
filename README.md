@@ -85,7 +85,7 @@ tiles, the yard photo and, for a 3D view, the panel's ground and its two map lib
 The libraries (MapLibre GL and three.js) pass only with the exact contents of the versions the panel ships, checked
 by their SHA-256 and served as plain JavaScript and CSS: a panel that sent anything else could otherwise run its own
 script on Home Assistant's address. A panel that moves to newer versions needs an integration release that knows
-them; until then the 3D view isn't offered. The first ground read after the panel starts can take up to a minute
+them; until then the card keeps to its flat map. The first ground read after the panel starts can take up to a minute
 or so while the panel fetches lidar for the yard.
 
 ## Commands
@@ -125,6 +125,12 @@ It shows:
 - **Map:** the yard photo with your areas, no-go zones, no-vision zones, pathways and the dock, the current run's track
   coloured by RTK fix (green fixed, amber float, orange single), and the robot with its heading, moving live. The
   crosshair button follows the robot. Needs the **Map** option.
+- **3D:** the **3D** button (or the `view` option) draws the yard on the panel's ground, the robot's own heights
+  over the lawns and public lidar around them, with the robot as a small model that tilts with the ground. The height
+  menu draws the ground up to 3× taller, so gentle slopes show; follow flies behind the robot and turns with it, and
+  dragging the map lets go. Dragging with the right button (two fingers on a phone) turns and tilts the view. It
+  loads the panel's map libraries the first time it shows, and falls back to the flat map if the browser can't draw
+  3D or the panel has no ground yet.
 - **Controls**, with the **Commands** option on: **Start** opens the plan list and the panel's checks for it, and
   starts only when the panel says it would; **Pause**, **Stop** and **Dock** go at once; **Resume** asks for a second
   tap. Which ones show follows what the mower is doing. See [Commands](#commands).
@@ -141,6 +147,11 @@ Options (all in the visual editor):
 | `show_status`, `show_controls`, `show_map`, `show_camera` | `true` | Which parts to show (controls: Commands on) |
 | `camera` | `auto` | `auto`: Frigate's own entity when there is one; `integration`: always through the panel |
 | `map_height` | `320` | The map's height in pixels |
+| `view` | `2d` | `2d` (flat), `3d` or `3d_during_runs`: see below |
+| `ground_height` | `2` | How much taller the 3D view draws the ground: `1`, `1.5`, `2` or `3` |
+
+`view: 3d` draws the yard on its ground; `3d_during_runs` does that while a run is on and shows the flat map
+otherwise, and the map's 3D / 2D button changes it until the next run starts or ends.
 
 Without the Commands option the card only reads. It talks to Home Assistant, never to the panel.
 

@@ -13,7 +13,11 @@
 - The card shows a live preview in the dashboard's card picker, and the README has a screenshot of it.
 - **Ground for a 3D view** (Map option): websocket `groundskeeper/ground` (the panel's ground: version, bounds,
   zooms, relief) and views for its Terrarium tiles and for the panel's MapLibre GL and three.js, which pass only with
-  the contents of the pinned versions. The card's 3D view itself comes next.
+  the contents of the pinned versions.
+- **3D view on the card** (`view`: `2d`, `3d` or `3d_during_runs`, and a 3D / 2D button on the map): the yard on
+  the panel's ground with the robot as a model that tilts with it, a 1× to 3× height choice (`ground_height`), and a
+  follow camera that flies behind the robot. The libraries load the first time 3D shows; without WebGL or a ground
+  the card keeps its flat map and says why.
 
 ### Changed
 - README: one-click buttons to open the repository in the Marketplace (HACS before Home Assistant 2026.11) and

@@ -1,6 +1,6 @@
 /* Groundskeeper card: the robot's status, the yard map with the robot moving on it, and the camera that covers it.
  *
- * Served by the Groundskeeper integration and loaded on every dashboard; no build step, no libraries. Everything it
+ * Served by the Groundskeeper integration and loaded on every dashboard; no build step. Everything it
  * shows comes from Home Assistant: the entities, and the integration's websocket commands (groundskeeper/map,
  * groundskeeper/track, groundskeeper/subscribe) and imagery view. It never talks to the panel, so the panel's token
  * stays on the Home Assistant server.
@@ -10,7 +10,9 @@
  * switch on and every check passing. Start shows the panel's checks first and needs a confirm, Resume a second tap;
  * Pause, Stop and Dock, which stop the robot, go at once.
  *
- * The map is an SVG in metres around the yard (north up), over the panel's yard photo. Text from the panel or
+ * The map is an SVG in metres around the yard (north up), over the panel's yard photo. The 3D view (the `view`
+ * option, or the map's 3D button) draws the yard on the panel's ground with MapLibre and three.js instead, which
+ * come from the panel through the integration only when they match the checksums it pins. Text from the panel or
  * Home Assistant is always set as text, never as HTML.
  */
 
@@ -64,6 +66,7 @@ const CONTROL_ICON = {
 
 const DEFAULTS = {
   show_status: true, show_controls: true, show_map: true, show_camera: true, camera: "auto", map_height: 320,
+  view: "2d", ground_height: 2,
 };
 
 const LABELS = {
@@ -75,6 +78,8 @@ const LABELS = {
   show_camera: "Follow camera",
   camera: "Camera source",
   map_height: "Map height",
+  view: "Map view",
+  ground_height: "3D: draw the ground this much taller",
 };
 
 function el(tag, attrs = {}, ...children) {
@@ -134,6 +139,11 @@ class GroundskeeperCard extends HTMLElement {
     this._cmd = {
       on: null, plans: [], plan: null, tried: 0, pending: {}, open: false, preview: null, asked: 0,
     };
+    this._g3 = null;            // the 3D map (Yard3D) while it shows
+    this._g3Token = null;       // set while the 3D view is loading or showing
+    this._g3Fail = null;        // why the 3D view could not show, and when: {why, at}
+    this._viewPick = null;      // the map's 3D / 2D button, over the view option
+    this._heightPick = null;    // the 3D view's height choice, over the ground_height option
   }
 
   /* -- Lovelace API ------------------------------------------------------------------------------------------ */
@@ -141,6 +151,8 @@ class GroundskeeperCard extends HTMLElement {
     if (!config || typeof config !== "object") throw new Error("Invalid configuration");
     const next = { ...DEFAULTS, ...config };
     const entryChanged = this._config.entry_id !== next.entry_id;
+    if (next.view !== this._config.view) this._viewPick = null;
+    if (Number(next.ground_height) !== Number(this._config.ground_height)) this._heightPick = null;
     this._config = next;
     if (entryChanged) this._reset();
     this._built = false;
@@ -151,6 +163,7 @@ class GroundskeeperCard extends HTMLElement {
   set hass(hass) {
     const first = !this._hass;
     this._hass = hass;
+    LIBS.hass = hass;
     if (this._notes.robot && this._device()) {        // the robot turned up after the card was drawn
       this._clearNote("robot");
       this._built = false;
@@ -161,10 +174,18 @@ class GroundskeeperCard extends HTMLElement {
     this._updateCamera();
   }
 
-  connectedCallback() { if (this._hass) this._start(); }
+  connectedCallback() {
+    if (!this._hass) return;
+    this._start();
+    if (this._built && this._map && !this._g3Token && this._want3d()) this._drawMap();   // back on the page
+  }
+
   disconnectedCallback() {
     this._stop();
     this._resize?.disconnect();
+    this._drop3d();             // its WebGL context goes with it; it is drawn again when the card comes back
+    clearTimeout(this._g3Again);
+    this._g3Again = null;
   }
 
   getCardSize() {
@@ -202,6 +223,27 @@ class GroundskeeperCard extends HTMLElement {
                 { value: "integration", label: "Groundskeeper's follow camera (through the panel)" },
               ],
             },
+          },
+        },
+        {
+          name: "view",
+          default: "2d",
+          selector: {
+            select: {
+              mode: "dropdown",
+              options: [
+                { value: "2d", label: "Flat map" },
+                { value: "3d", label: "3D on the yard's ground" },
+                { value: "3d_during_runs", label: "3D during runs, flat otherwise" },
+              ],
+            },
+          },
+        },
+        {
+          name: "ground_height",
+          default: "2",
+          selector: {
+            select: { mode: "dropdown", options: GROUND_X.map((v) => ({ value: String(v), label: `${v}×` })) },
           },
         },
         {
@@ -254,6 +296,9 @@ class GroundskeeperCard extends HTMLElement {
    * when nothing has come for WATCHDOG_MS, which also covers a subscription lost when Home Assistant restarts. */
   _reset() {
     this._stop();
+    this._drop3d();
+    this._g3Fail = null;
+    this._clearNote("3d");
     this._live = this._pose = this._map = this._mapError = null;
     this._mapSha = undefined;
     this._mapOff = false;
@@ -360,6 +405,8 @@ class GroundskeeperCard extends HTMLElement {
     this._live = s;
     if (!s.position) this._pose = null;                  // no fix (or no map): the last pose is not where it is
     else if (!this._pose || (s.position.t || 0) >= (this._pose.t || 0)) this._pose = s.position;
+    if (s.position) this._g3?.take(s.position);
+    else this._g3?.clear();
     if (this._config.show_map && !this._mapOff) {
       // Not read yet, or the last try failed: ask again, at most every RETRY_MS.
       if (!this._map && !this._loadingMap && Date.now() - this._mapTried >= RETRY_MS) this._loadMap();
@@ -369,8 +416,12 @@ class GroundskeeperCard extends HTMLElement {
     }
     const run = s.run ? s.run.id : null;
     if (run !== this._track.run) {                        // a new run, or none: draw what belongs now
+      const ended = this._track.run !== null;
       this._track = { run, points: [], since: 0, busy: false, at: 0 };
-      this._drawTrack();
+      if (this._config.view === "3d_during_runs") this._viewPick = null;   // the button's pick lasts one run (or gap)
+      if (ended && this._g3) this._refreshGround();       // the run may have added heights
+      if (this._map && this._want3d() !== !!this._g3Token) this._drawMap();   // 3D during runs
+      else this._drawTrack();
     }
     if (run !== null && this._config.show_map && Date.now() - this._track.at >= TRACK_EVERY_MS) this._loadTrack();
     this._drawRobot();
@@ -382,6 +433,7 @@ class GroundskeeperCard extends HTMLElement {
       if (typeof p?.lon !== "number" || typeof p?.lat !== "number") continue;
       if (!this._pose || (p.t || 0) >= (this._pose.t || 0)) this._pose = p;
       this._trail.push([p.t, p.lon, p.lat]);
+      this._g3?.take(p);
     }
     if (this._trail.length > TRAIL_MAX) this._trail.splice(0, this._trail.length - TRAIL_MAX);
     this._drawRobot();
@@ -441,6 +493,7 @@ class GroundskeeperCard extends HTMLElement {
   /* -- rendering ------------------------------------------------------------------------------------------------- */
   _render() {
     if (!this._hass) return;
+    this._drop3d();                                       // its container goes with the old content
     const c = this._config;
     const root = this.shadowRoot;
     root.replaceChildren();
@@ -795,10 +848,17 @@ class GroundskeeperCard extends HTMLElement {
     if (!wrap) return;
     const m = this._map;
     if (!m || !Array.isArray(m.bounds) || !m.geojson) {
+      this._drop3d();
       wrap.replaceChildren(el("div", { class: "empty", text: this._mapError || "Loading the map…" }));
-      this._svg = null;
+      this._svg = this._robotG = this._trackG = null;
       return;
     }
+    if (this._want3d()) {
+      this._draw3d();
+      return;
+    }
+    this._drop3d();
+    if (!this._g3Fail) this._clearNote("3d");
     const proj = (this._proj = new Projection(m.bounds));
     const fit = proj.box(m.bounds);
     this._fitBox = { x: fit.x - PAD_M, y: fit.y - PAD_M, w: fit.w + 2 * PAD_M, h: fit.h + 2 * PAD_M };
@@ -838,16 +898,7 @@ class GroundskeeperCard extends HTMLElement {
       el("polygon", { points: "0,-1.9 0.65,-0.75 -0.65,-0.75", class: "nose" }));
     svg.append(this._trackG, this._robotG);
     this._svg = svg;
-    const follow = el("button", {
-      class: "follow", title: "Follow the robot", "aria-pressed": String(this._follow),
-      onclick: () => {
-        this._follow = !this._follow;
-        follow.setAttribute("aria-pressed", String(this._follow));
-        this._view();
-        this._drawRobot();
-      },
-    }, el("ha-icon", { icon: "mdi:crosshairs-gps" }));
-    wrap.replaceChildren(svg, follow);
+    wrap.replaceChildren(svg, this._mapTools(false));
     this._drawn = null;
     this._view();
     this._drawTrack();
@@ -858,6 +909,140 @@ class GroundskeeperCard extends HTMLElement {
       this._resize = new ResizeObserver(() => this._drawRobot());
       this._resize.observe(svg);
     }
+  }
+
+  /* The map's buttons: 3D or flat, the 3D ground's height, and follow the robot. */
+  _mapTools(three, ready = true) {
+    const tools = el("div", { class: "tools" });
+    tools.append(el("button", {
+      class: "tool", text: three ? "2D" : "3D",
+      title: three ? "Show the flat map" : "Show the yard in 3D, on its ground",
+      onclick: () => {
+        this._viewPick = three ? "2d" : "3d";
+        if (three) this._clearNote("3d");
+        else this._g3Fail = null;                       // asked for: try again now
+        this._follow = false;
+        this._drawMap();
+      },
+    }));
+    if (!ready) return tools;                             // loading: only the way back to the flat map
+    if (three) {
+      const now = this._height();
+      tools.append(el("select", {
+        class: "tool", title: "Draw the ground this much taller", "aria-label": "Draw the ground this much taller",
+        onchange: (e) => {
+          this._heightPick = Number(e.target.value);
+          this._g3?.setHeight(this._heightPick);
+        },
+      }, ...GROUND_X.map((v) => el("option", { value: v, text: `${v}×`, selected: v === now }))));
+    }
+    const follow = el("button", {
+      class: "tool round", title: "Follow the robot", "aria-pressed": String(this._follow),
+      onclick: () => {
+        this._follow = !this._follow;
+        if (this._g3) this._follow = this._g3.setFollow(this._follow, true);
+        else {
+          this._view();
+          this._drawRobot();
+        }
+        follow.setAttribute("aria-pressed", String(this._follow));
+      },
+    }, el("ha-icon", { icon: "mdi:crosshairs-gps" }));
+    this._followBtn = follow;
+    tools.append(follow);
+    return tools;
+  }
+
+  _height() {
+    const x = Number(this._heightPick ?? this._config.ground_height);
+    return GROUND_X.includes(x) ? x : 2;
+  }
+
+  /* 3D when the option (or the button) asks for it, unless it failed lately. */
+  _want3d() {
+    if (!this._config.show_map) return false;
+    if (this._g3Fail && Date.now() - this._g3Fail.at < GROUND_RETRY_MS) return false;
+    const pick = this._viewPick ?? this._config.view;
+    return pick === "3d" || (pick === "3d_during_runs" && this._track.run !== null);
+  }
+
+  async _draw3d() {
+    const wrap = this._mapWrap, m = this._map, entry = this._entryId();
+    this._drop3d();
+    if (!this.isConnected) return;                        // drawn when the card is on the page again
+    const token = (this._g3Token = {});
+    this._svg = this._robotG = this._trackG = null;
+    this._resize?.disconnect();
+    wrap.replaceChildren(el("div", { class: "empty", text: "Loading the 3D view…" }), this._mapTools(true, false));
+    let ground, libs;
+    try {
+      if (!hasWebGL()) throw new Error("this browser cannot draw 3D (no WebGL)");
+      ground = await this._hass.callWS({ type: `${DOMAIN}/ground`, entry_id: entry });
+      libs = await loadLibs(this._hass, ground.vendor);
+    } catch (err) {
+      if (token !== this._g3Token) return;
+      const why = {
+        no_ground: "the panel has no ground for this yard yet",
+        map_off: "the map is switched off in the integration's options",
+        panel_unavailable: "the panel did not answer",
+      }[err?.code] || err?.message || "it could not be loaded";
+      this._fail3d(why);
+      return;
+    }
+    if (token !== this._g3Token || this._map !== m) return;     // switched off, or a new map, meanwhile
+    if (!this.isConnected || wrap !== this._mapWrap) {             // taken off the page, or drawn anew
+      if (token === this._g3Token) this._g3Token = null;
+      return;
+    }
+    const box = el("div", { class: "gl" });
+    wrap.replaceChildren(el("style", { text: libs.css }), box, this._mapTools(true));
+    try {
+      const g3 = new Yard3D({
+        container: box, libs, ground, map: m, height: this._height(),
+        onFollow: (on) => {
+          this._follow = on;
+          this._followBtn?.setAttribute("aria-pressed", String(on));
+        },
+        onFail: (why) => { if (this._g3 === g3) this._fail3d(why); },
+      });
+      this._g3 = g3;
+    } catch (err) {
+      this._fail3d(err?.message || "it could not be drawn");
+      return;
+    }
+    this._clearNote("3d");
+    if (this._pose) this._g3.take(this._pose);
+    this._drawTrack();
+  }
+
+  _fail3d(why) {
+    this._drop3d();
+    this._g3Fail = { why, at: Date.now() };
+    this._setNote(`No 3D view: ${why}. Showing the flat map.`, "3d");
+    this._drawMap();
+    clearTimeout(this._g3Again);                          // try 3D again later, if it is still wanted then
+    this._g3Again = setTimeout(() => {
+      this._g3Again = null;
+      if (this.isConnected && this._built && this._map && !this._g3Token && this._want3d()) this._drawMap();
+    }, GROUND_RETRY_MS + 1000);
+  }
+
+  _drop3d() {
+    this._g3Token = null;
+    if (this._g3) {
+      this._g3.destroy();
+      this._g3 = null;
+      this._follow = false;
+    }
+  }
+
+  /* After a run: the ground again, which the run may have added heights to. */
+  async _refreshGround() {
+    const g3 = this._g3;
+    try {
+      const ground = await this._hass.callWS({ type: `${DOMAIN}/ground`, entry_id: this._entryId() });
+      if (this._g3 === g3) g3.setGround(ground);
+    } catch (_) { /* the ground on show stays */ }
   }
 
   _view() {
@@ -894,11 +1079,16 @@ class GroundskeeperCard extends HTMLElement {
   /* The run's track by RTK fix (or, without a run, the live trail). A run's track only grows, so only its new
    * points are added; the trail, a new run or a new map draws it all again. */
   _drawTrack() {
-    const g = this._trackG;
-    if (!g || !this._proj) return;
     const t = this._track;
     const run = t.run !== null && t.points.length ? t.run : null;
-    const rows = run !== null ? t.points : this._trail.map(([ts, lon, lat]) => [ts, lon, lat, -1]);
+    const trail = () => this._trail.map(([ts, lon, lat]) => [ts, lon, lat, -1]);
+    if (this._g3) {
+      this._g3.setTrack(run !== null ? t.points : trail());
+      return;
+    }
+    const g = this._trackG;
+    if (!g || !this._proj) return;
+    const rows = run !== null ? t.points : trail();
     let d = this._drawn;
     if (!d || d.run !== run || run === null || rows.length < d.n) {
       g.replaceChildren();
@@ -980,6 +1170,605 @@ class GroundskeeperCard extends HTMLElement {
   }
 }
 
+/* -- the 3D view ------------------------------------------------------------------------------------------------ *
+ * The yard on the panel's ground (the robot's own heights over the lawns, public lidar around them), with the robot
+ * as a small 3D model. MapLibre and three.js are the panel's own copies, passed on by the integration only when each
+ * matches the checksum it pins. They are fetched, signed in, the first time a card shows 3D, and shared by every card
+ * on the page. Anything missing (no WebGL, no ground yet, a library that does not load) leaves the flat map. The model
+ * and its motion follow the panel's web/robot3d.js. */
+const GROUND_X = [1, 1.5, 2, 3];                         // the ground drawn this much taller
+const DEG = Math.PI / 180;
+const R3 = {
+  LEN: 1.40,          // metres, the mower's front to the back of the tracks
+  MIN_PX: 34,         // the model is never drawn shorter than this on screen
+  AHEAD_S: 2.5,       // keep moving on the last speed and heading for this long, then wait
+  EASE_S: 0.5,        // how quickly it closes on where it should be
+  JUMP_M: 25,         // further behind than this (a new run, a long gap): put it there at once
+  RESET_S: 30,        // nothing newer by the robot's clock this long: take the next sample anyway
+  GATE_MPS: 2,        // faster than this between two samples is a stray reading, not the robot...
+  GATE_PACE: 2.5,     // ...or than this many times the pace it has been keeping
+  GATE_M: 3,          // ...beyond this much room for noise
+  GATE_HOLD_S: 6,     // a far sample nothing confirms is dropped
+  MOWER_PITCH: 10,    // degrees the mower turns about the hitch at most, nose up or down...
+  MOWER_ROLL: 6,      // ...and side to side
+  FOLLOW_SIDE: 45,    // the follow camera sits behind the robot and this far round to one side
+  FOLLOW_TURN: 40,    // degrees a second it turns at most to stay behind the robot
+  FOLLOW_LEAD: 1.5,   // metres ahead of the robot the camera looks at
+};
+const MODEL = { body: "#2A2D30", frame: "#4A5055", track: "#17191A", trim: "#F2C01E", stop: "#D8322B",
+  light: "#F4F7FA" };
+const GROUND_RETRY_MS = 5 * 60 * 1000;                   // 3D failed: try again after this long (or on a tap)
+const TRACK_3D_MS = 500;                                 // the 3D track is sent to MapLibre at most this often
+const viaHass = (path) => `${PROTOCOL}://${path}`;       // a Home Assistant path, fetched signed in
+const metres = (lat) => [111320 * Math.cos(lat * DEG), 111320];
+const angle = (a) => ((a % 360) + 540) % 360 - 180;     // -180..180
+const LIBS = { promise: null, hass: null };              // hass: the newest card's, for the gk:// protocol
+const PROTOCOL = "gk";
+let WEBGL = null;
+
+/* Whether this browser can draw 3D: asked once, and the probe's context let go at once (browsers keep only a few). */
+function hasWebGL() {
+  if (WEBGL === null) {
+    try {
+      const c = document.createElement("canvas");
+      const gl = c.getContext("webgl2") || c.getContext("webgl");
+      WEBGL = !!gl;
+      gl?.getExtension("WEBGL_lose_context")?.loseContext();
+    } catch (_) {
+      WEBGL = false;
+    }
+  }
+  return WEBGL;
+}
+
+/* MapLibre (its script and style sheet) and three.js, through the integration (signed in), once per page. */
+function loadLibs(hass, vendor) {
+  if (!LIBS.promise) {
+    LIBS.promise = (async () => {
+      const get = async (name, type) => {
+        const r = await hass.fetchWithAuth(vendor[name]);
+        if (!r.ok) throw new Error(`${name} could not be read (${r.status})`);
+        return new Blob([await r.arrayBuffer()], { type });
+      };
+      const [js, css, three] = await Promise.all([get("maplibre-gl.js", "text/javascript"),
+        get("maplibre-gl.css", "text/css"), get("three.module.min.js", "text/javascript")]);
+      // Always the pinned copy, kept to the card: one another card put on the page stays theirs.
+      const theirs = window.maplibregl;
+      let maplibregl;
+      const jsUrl = URL.createObjectURL(js);
+      try {
+        await new Promise((ok, fail) => {
+          const s = document.createElement("script");
+          s.src = jsUrl;
+          s.onload = ok;
+          s.onerror = () => fail(new Error("MapLibre did not load"));
+          document.head.append(s);
+        });
+        maplibregl = window.maplibregl;
+      } finally {
+        URL.revokeObjectURL(jsUrl);
+        if (theirs) window.maplibregl = theirs;
+      }
+      if (!maplibregl?.Map || maplibregl === theirs) throw new Error("MapLibre did not load");
+      // The ground's tiles and the photo are asked for through Home Assistant's own fetch, which renews an expired
+      // token first: a request with a stale one would count as a failed login.
+      maplibregl.addProtocol(PROTOCOL, async (params, abort) => {
+        const hass = LIBS.hass;
+        if (!hass) throw new Error("not signed in");
+        const r = await hass.fetchWithAuth(params.url.slice(PROTOCOL.length + 3), { signal: abort.signal });
+        if (!r.ok) throw new Error(`${r.status}`);
+        return { data: await r.arrayBuffer() };
+      });
+      const url = URL.createObjectURL(three);
+      let THREE;
+      try {
+        THREE = await import(url);
+      } finally {
+        URL.revokeObjectURL(url);
+      }
+      if (!THREE?.WebGLRenderer) throw new Error("three.js did not load");
+      return { maplibregl, THREE, css: await css.text() };
+    })();
+    LIBS.promise.catch(() => { LIBS.promise = null; });  // a later try may work
+  }
+  return LIBS.promise;
+}
+
+/* The robot from simple solids about its size (forward is +Y, up is +Z, in metres): a Yarbo core with the Lawn
+ * Mower Pro, which hangs on the core's hitch (returned as `mower`, to turn about it). */
+function buildRobot(THREE) {
+  const g = new THREE.Group();
+  const mat = (c) => new THREE.MeshLambertMaterial({ color: c });
+  // A soft shadow under it, so it stands on the lawn: three see-through ellipses, drawn through the ground but
+  // before the robot.
+  [[0.80, 1.0], [0.66, 0.86], [0.54, 0.72]].forEach(([rx, ry], i) => {
+    const m = new THREE.Mesh(new THREE.CircleGeometry(1, 40), new THREE.MeshBasicMaterial({
+      color: 0x000000, opacity: 0.28, transparent: false, blending: THREE.CustomBlending,
+      blendSrc: THREE.SrcAlphaFactor, blendDst: THREE.OneMinusSrcAlphaFactor,
+      depthTest: false, depthWrite: false, side: THREE.DoubleSide }));
+    m.scale.set(rx, ry, 1);
+    m.position.set(0, 0.04, 0.01);
+    m.renderOrder = -1 - i;
+    g.add(m);
+  });
+  const core = new THREE.Group(), mower = new THREE.Group();
+  const HITCH = [0, 0.13, 0.17];
+  mower.position.set(...HITCH);
+  g.add(core, mower);
+  const black = mat(MODEL.body), graphite = mat(MODEL.frame), yellow = mat(MODEL.trim), tread = mat(MODEL.track);
+  const red = mat(MODEL.stop);
+  const put = (to, off) => (geo, m, x, y, z) => {
+    const o = new THREE.Mesh(geo, m);
+    o.position.set(x - off[0], y - off[1], z - off[2]);
+    to.add(o);
+    return o;
+  };
+  const add = put(core, [0, 0, 0]), madd = put(mower, HITCH);
+  const rounded = (w, l, r) => {                       // a rounded rectangle, w across and l long
+    const s = new THREE.Shape(), x = w / 2, y = l / 2;
+    s.moveTo(-x + r, -y);
+    s.lineTo(x - r, -y); s.quadraticCurveTo(x, -y, x, -y + r);
+    s.lineTo(x, y - r); s.quadraticCurveTo(x, y, x - r, y);
+    s.lineTo(-x + r, y); s.quadraticCurveTo(-x, y, -x, y - r);
+    s.lineTo(-x, -y + r); s.quadraticCurveTo(-x, -y, -x + r, -y);
+    return s;
+  };
+  const slab = (w, l, h, r, bevel = 0.012, seg = 2) => {   // a slab of that outline, h tall, edges softened
+    const geo = new THREE.ExtrudeGeometry(rounded(w - 2 * bevel, l - 2 * bevel, Math.max(0.001, r - bevel)), {
+      depth: h - 2 * bevel, bevelEnabled: true, bevelSize: bevel, bevelThickness: bevel, bevelSegments: seg,
+      curveSegments: 10 });
+    geo.translate(0, 0, bevel);
+    return geo;
+  };
+  const hip = (w, l, wt, lt, h, dy = 0) => {            // a w x l base narrowing to a wt x lt top, h up
+    const b = [[-w / 2, -l / 2], [w / 2, -l / 2], [w / 2, l / 2], [-w / 2, l / 2]];
+    const t = [[-wt / 2, -lt / 2 + dy], [wt / 2, -lt / 2 + dy], [wt / 2, lt / 2 + dy], [-wt / 2, lt / 2 + dy]];
+    const v = [];
+    const quad = (p, q, r, s) => v.push(...p, ...q, ...r, ...p, ...r, ...s);
+    const B = (i) => [b[i][0], b[i][1], 0], T = (i) => [t[i][0], t[i][1], h];
+    for (let i = 0; i < 4; i++) quad(B(i), B((i + 1) % 4), T((i + 1) % 4), T(i));
+    quad(T(0), T(1), T(2), T(3));
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute("position", new THREE.Float32BufferAttribute(v, 3));
+    geo.computeVertexNormals();
+    return geo;
+  };
+  const upright = (geo) => { geo.rotateX(Math.PI / 2); return geo; };
+
+  // The core: two rubber tracks, the chassis between them, the rounded shell over them.
+  const TL = 0.78, TH = 0.24, TW = 0.14, TX = 0.27, CY = -0.27, R = TH / 2;
+  const belt = new THREE.ExtrudeGeometry(rounded(TL, TH, R - 0.001), {
+    depth: TW - 0.02, bevelEnabled: true, bevelSize: 0.01, bevelThickness: 0.01, bevelSegments: 2, curveSegments: 14 });
+  belt.rotateY(Math.PI / 2);
+  belt.rotateX(Math.PI / 2);
+  belt.translate(-(TW - 0.02) / 2, 0, R);
+  for (const side of [1, -1]) add(belt, tread, side * TX, CY, 0);
+  add(slab(0.40, 0.70, 0.13, 0.04), graphite, 0, CY, 0.11);
+  add(slab(0.50, 0.64, 0.15, 0.13, 0.04, 4), black, 0, CY - 0.01, 0.235);
+  add(hip(0.40, 0.52, 0.30, 0.40, 0.028, 0), black, 0, CY - 0.01, 0.378);
+  const foot = upright(new THREE.CylinderGeometry(0.03, 0.036, 0.03, 16));
+  const neck = upright(new THREE.CylinderGeometry(0.011, 0.013, 0.07, 10));
+  const grip = upright(new THREE.CapsuleGeometry(0.023, 0.10, 4, 12));
+  for (const side of [1, -1]) {                         // yellow shoulders, each with a stubby antenna
+    add(slab(0.11, 0.32, 0.10, 0.035, 0.015, 3), yellow, side * 0.275, CY + 0.13, 0.235);
+    add(foot, graphite, side * 0.285, CY + 0.10, 0.345);
+    add(neck, black, side * 0.285, CY + 0.10, 0.395);
+    add(grip, black, side * 0.285, CY + 0.10, 0.50);
+  }
+  add(slab(0.13, 0.085, 0.012, 0.012, 0.004), graphite, 0, CY - 0.19, 0.402);
+  add(slab(0.10, 0.058, 0.032, 0.012, 0.006), red, 0, CY - 0.19, 0.410);              // the red stop button
+  add(upright(new THREE.CylinderGeometry(0.026, 0.03, 0.022, 16)),                   // the beacon
+    new THREE.MeshBasicMaterial({ color: C.robot }), 0, CY + 0.06, 0.416);
+
+  // The Lawn Mower Pro: a hitch box, a wide two-step skirt and a faceted housing with its yellow handles.
+  const MY = 0.44;
+  madd(slab(0.28, 0.20, 0.19, 0.03, 0.012), black, 0, 0.13, 0.12);
+  madd(slab(0.82, 0.60, 0.075, 0.15, 0.02, 3), black, 0, MY, 0.03);
+  madd(slab(0.75, 0.53, 0.07, 0.14, 0.02, 3), graphite, 0, MY, 0.095);
+  madd(slab(0.60, 0.42, 0.07, 0.10, 0.02, 3), black, 0, MY - 0.02, 0.155);
+  madd(hip(0.54, 0.36, 0.28, 0.18, 0.12, -0.03), black, 0, MY - 0.02, 0.215);
+  const knob = new THREE.SphereGeometry(0.055, 16, 10);
+  knob.scale(1, 1, 0.6);
+  const bar = slab(0.045, 0.24, 0.04, 0.015, 0.008), leg = slab(0.045, 0.045, 0.06, 0.012, 0.006);
+  for (const side of [1, -1]) {
+    madd(knob, yellow, side * 0.215, MY + 0.07, 0.235);
+    madd(bar, yellow, side * 0.335, MY + 0.02, 0.205);
+    for (const e of [1, -1]) madd(leg, yellow, side * 0.335, MY + 0.02 + e * 0.0975, 0.155);
+  }
+  const light = new THREE.MeshBasicMaterial({ color: MODEL.light });
+  for (const side of [1, -1]) madd(new THREE.BoxGeometry(0.15, 0.012, 0.026), light, side * 0.17, MY + 0.262, 0.128);
+  madd(new THREE.BoxGeometry(0.46, 0.012, 0.014), red, 0, MY + 0.297, 0.062);
+  return { robot: g, mower };
+}
+
+/* One card's 3D map. `onFollow(on)` is told when following stops or starts, `onFail(why)` when it cannot draw. */
+class Yard3D {
+  constructor({ container, libs, ground, map, height, onFollow, onFail }) {
+    const ml = libs.maplibregl;
+    this.libs = libs;
+    this.onFollow = onFollow;
+    this.onFail = onFail;
+    this.ground = ground;
+    this.x = height;
+    this.fix = null;            // the last live sample: {lon, lat, heading, pitch, roll, speed, t, at}
+    this.held = null;           // a far sample waiting for the next one to confirm it
+    this.pace = 0;              // metres a second between recent samples, smoothed
+    this.pose = null;           // what is drawn
+    this.raf = 0;
+    this.last = 0;
+    this.trackData = { type: "FeatureCollection", features: [] };
+    this.follow = { on: false, offset: R3.FOLLOW_SIDE, cam: null, turning: false, hands: false, wheelAt: 0 };
+    const [w, s, e, n] = map.bounds;
+    this.fit = [[w, s], [e, n]];
+    this.map = new ml.Map({
+      container, attributionControl: false, maxPitch: 80, pitch: 55, maxZoom: 23,
+      bounds: this.fit, fitBoundsOptions: { padding: 24 },
+      style: { version: 8, sources: {},
+        layers: [{ id: "bg", type: "background", paint: { "background-color": "#1A1F1C" } }] },
+    });
+    try {
+      // A tile that did not come leaves the ground as it was; anything else is said once, in the console.
+      this.map.on("error", (e) => { if (!e?.sourceId && !e?.tile) console.warn("Groundskeeper 3D:", e?.error); });
+      this.map.getCanvas().addEventListener("webglcontextlost", () => this._fail("the browser let the 3D view go"));
+      this.map.addControl(new ml.NavigationControl({ showZoom: false, visualizePitch: true }), "top-left");
+      this.map.on("load", () => {
+        try {
+          this._layers(map);
+        } catch (err) {
+          this._fail(err?.message || "the map could not be drawn");
+        }
+      });
+      this._gestures();
+    } catch (err) {
+      this.destroy();
+      throw err;
+    }
+  }
+
+  _fail(why) {
+    if (this.dead) return;
+    this.onFail(why);                                   // the card drops this map and shows the flat one
+  }
+
+  _dem(g) {
+    return { type: "raster-dem", tiles: [viaHass(g.tiles)], tileSize: 256, encoding: g.encoding,
+      minzoom: g.minzoom, maxzoom: g.maxzoom, bounds: g.bounds };
+  }
+
+  _layers(m) {
+    const mp = this.map;
+    if (m.yard?.signed && Array.isArray(m.yard.bbox)) {
+      const [w, s, e, n] = m.yard.bbox;
+      mp.addSource("gk-photo", { type: "image", url: viaHass(m.yard.signed),
+        coordinates: [[w, n], [e, n], [e, s], [w, s]] });
+      mp.addLayer({ id: "gk-photo", type: "raster", source: "gk-photo",
+        paint: { "raster-opacity": 0.95, "raster-fade-duration": 0 } });
+    }
+    this._addGround();
+    mp.addSource("gk-shapes", { type: "geojson", data: m.geojson });
+    const kind = (k) => ["==", ["get", "kind"], k];
+    const metre = (m0) => ["interpolate", ["exponential", 2], ["zoom"], 15, m0 * 0.55, 22, m0 * 70];
+    mp.addLayer({ id: "gk-area", type: "fill", source: "gk-shapes", filter: kind("areas"),
+      paint: { "fill-color": C.area, "fill-opacity": 0.08 } });
+    mp.addLayer({ id: "gk-area-edge", type: "line", source: "gk-shapes", filter: kind("areas"),
+      paint: { "line-color": C.area, "line-width": 2 } });
+    mp.addLayer({ id: "gk-novis", type: "line", source: "gk-shapes", filter: kind("novisionzones"),
+      paint: { "line-color": C.novis, "line-width": 2, "line-dasharray": [3, 2] } });
+    mp.addLayer({ id: "gk-nogo", type: "fill", source: "gk-shapes", filter: kind("nogozones"),
+      paint: { "fill-color": C.nogo, "fill-opacity": 0.22 } });
+    mp.addLayer({ id: "gk-nogo-edge", type: "line", source: "gk-shapes", filter: kind("nogozones"),
+      paint: { "line-color": C.nogo, "line-width": 2 } });
+    mp.addLayer({ id: "gk-road", type: "line", source: "gk-shapes", filter: kind("pathways"),
+      layout: { "line-cap": "round", "line-join": "round" },
+      paint: { "line-color": C.road, "line-width": metre(0.9), "line-opacity": 0.95 } });
+    mp.addLayer({ id: "gk-road-mid", type: "line", source: "gk-shapes", filter: kind("pathways"),
+      paint: { "line-color": "#F2F5F3", "line-width": 1, "line-dasharray": [4, 4] } });
+    mp.addLayer({ id: "gk-dock", type: "circle", source: "gk-shapes", filter: kind("charging"),
+      paint: { "circle-color": C.ink, "circle-radius": 5, "circle-stroke-color": C.dock,
+        "circle-stroke-width": 2.5 } });
+    mp.addSource("gk-track", { type: "geojson", data: this.trackData });
+    mp.addLayer({ id: "gk-track", type: "line", source: "gk-track",
+      layout: { "line-cap": "round", "line-join": "round" },
+      paint: { "line-color": ["get", "c"], "line-width": 2.5, "line-opacity": 0.9 } });
+    mp.addLayer(this._robotLayer());
+    this.ready = true;
+    this._kick();
+  }
+
+  /* The ground and its shading (lit from 335° on the map, as the panel's is, and the model). MapLibre wants a
+   * source of its own for the shading. */
+  _addGround() {
+    const mp = this.map, dem = this._dem(this.ground);
+    mp.addSource("gk-ground", dem);
+    mp.addSource("gk-shade", { ...dem });
+    mp.addLayer({ id: "gk-shade", type: "hillshade", source: "gk-shade",
+      paint: { "hillshade-illumination-anchor": "map", "hillshade-illumination-direction": 335,
+        "hillshade-exaggeration": 0.3, "hillshade-shadow-color": "#0E1311", "hillshade-accent-color": "#0E1311",
+        "hillshade-highlight-color": "#FFFFFF" } }, mp.getLayer("gk-area") ? "gk-area" : undefined);
+    mp.setTerrain({ source: "gk-ground", exaggeration: this.x });
+  }
+
+  /* A newer ground (a run added heights): the new tiles, or, over a different area, both sources again. */
+  setGround(g) {
+    if (!g || g.version === this.ground.version) return;
+    const old = this.ground;
+    this.ground = g;
+    if (!this.ready) return;
+    const mp = this.map;
+    if (g.minzoom === old.minzoom && g.maxzoom === old.maxzoom && String(g.bounds) === String(old.bounds)) {
+      for (const id of ["gk-ground", "gk-shade"]) mp.getSource(id).setTiles([viaHass(g.tiles)]);
+      return;
+    }
+    mp.setTerrain(null);
+    mp.removeLayer("gk-shade");
+    mp.removeSource("gk-shade");
+    mp.removeSource("gk-ground");
+    this._addGround();
+  }
+
+  setHeight(x) {
+    this.x = x;
+    if (this.ready) this.map.setTerrain({ source: "gk-ground", exaggeration: x });
+  }
+
+  /* The track, [t, lon, lat, rtk] rows (rtk -1: the live trail), as lines in its colours. */
+  _drawTrack(rows) {
+    const features = [];
+    let cur = null;
+    for (const [, lon, lat, rtk] of rows) {
+      if (typeof lon !== "number" || typeof lat !== "number") continue;
+      const c = rtk === -1 ? C.trail : RTK_COLOUR[rtk] || C.single;
+      if (!cur || cur.properties.c !== c) {
+        const from = cur ? cur.geometry.coordinates[cur.geometry.coordinates.length - 1] : null;
+        cur = { type: "Feature", properties: { c }, geometry: { type: "LineString", coordinates: from ? [from] : [] } };
+        features.push(cur);
+      }
+      cur.geometry.coordinates.push([lon, lat]);
+    }
+    this.trackData = { type: "FeatureCollection", features: features.filter((f) => f.geometry.coordinates.length > 1) };
+    if (this.ready) this.map.getSource("gk-track").setData(this.trackData);
+  }
+
+  /* The track, at most every TRACK_3D_MS: the live trail is sent whole on every sample. */
+  setTrack(rows) {
+    this.rows = rows;
+    if (this.trackTimer) return;
+    this._drawTrack(rows);
+    this.trackTimer = setTimeout(() => {
+      this.trackTimer = null;
+      if (!this.dead && this.rows !== rows) this._drawTrack(this.rows);
+    }, TRACK_3D_MS);
+  }
+
+  /* One position sample: {lon, lat, heading, pitch, roll, speed, t}, t the robot's own time. The same time again is
+   * the same sample and an older one is late (the backlog after a dropout): both dropped, unless nothing newer has
+   * come for R3.RESET_S (the robot's clock was set back). */
+  take(s) {
+    if (!s || typeof s.lon !== "number" || typeof s.lat !== "number") return;
+    const now = performance.now(), f = this.fix;
+    const t = typeof s.t === "number" ? s.t : null;
+    if (f && f.t !== null && t !== null && (t === f.t || (t < f.t && now - f.at < R3.RESET_S * 1000))) return;
+    if (f && t === null && s.lon === f.lon && s.lat === f.lat) return;
+    if (!this._gate(s, t, now)) return;
+    const num = (v, d) => (typeof v === "number" && Number.isFinite(v) ? v : d);
+    this.fix = { lon: s.lon, lat: s.lat, heading: num(s.heading, f ? f.heading : 0), pitch: num(s.pitch, 0),
+      roll: num(s.roll, 0), speed: num(s.speed, 0), t, at: now };
+    if (!this.pose) this.pose = { ...this.fix };
+    this._kick();
+  }
+
+  /* No position now (no fix): the model goes, as the flat map's marker does, until the next sample. */
+  clear() {
+    if (!this.pose && !this.fix) return;
+    this.pose = this.fix = this.held = null;
+    if (this.follow.on) this.setFollow(false);
+    if (this.ready) this.map.triggerRepaint();
+  }
+
+  /* The speed gate: a sample further from the last than the robot could have driven is held, not drawn; the next
+   * one decides whether the robot really moved there (taken) or it was a stray (dropped). */
+  _gate(s, t, now) {
+    const f = this.fix;
+    if (!f || now - f.at > R3.GATE_HOLD_S * 1000) { this.held = null; this.pace = 0; return true; }
+    const dist = (a, b) => {
+      const [kx, ky] = metres(b.lat);
+      return Math.hypot((a.lon - b.lon) * kx, (a.lat - b.lat) * ky);
+    };
+    const gap = (at, bt, aAt, bAt) => Math.max(0, at !== null && bt !== null ? at - bt : (aAt - bAt) / 1000);
+    const fits = (d, secs) => d <= R3.GATE_M + Math.max(R3.GATE_MPS, R3.GATE_PACE * this.pace) * secs;
+    const take = (d, secs) => {
+      if (secs > 0.2 && secs <= 3) this.pace = 0.7 * this.pace + 0.3 * Math.min(10, d / secs);
+      this.held = null;
+      return true;
+    };
+    const df = dist(s, f), gf = gap(t, f.t, now, f.at);
+    if (fits(df, gf)) return take(df, gf);
+    const h = this.held;
+    if (h && (t !== null ? t === h.t : s.lon === h.s.lon && s.lat === h.s.lat)) return false;   // the held one again
+    if (h && now - h.at <= R3.GATE_HOLD_S * 1000) {
+      const dh = dist(s, h.s), gh = gap(t, h.t, now, h.at);
+      if (fits(dh, gh)) return take(dh, gh);
+    }
+    this.held = { s, t, at: now };
+    return false;
+  }
+
+  _kick() {
+    if (!this.raf && !this.dead) {
+      this.last = performance.now();
+      this.raf = requestAnimationFrame((ts) => this._tick(ts));
+    }
+  }
+
+  /* One frame: move the drawn pose toward where the robot should be (carrying on at its speed and heading for up to
+   * R3.AHEAD_S, then catching up, never in a jump); stop asking for frames once it is there. */
+  _tick(now) {
+    this.raf = 0;
+    const p = this.pose, f = this.fix;
+    if (this.dead || !this.ready || !p || !f) return;
+    const dt = Math.max(0, Math.min(0.25, (now - this.last) / 1000));
+    this.last = now;
+    const [kx, ky] = metres(f.lat);
+    const ahead = Math.min(R3.AHEAD_S, (now - f.at) / 1000) * (Math.abs(f.speed) > 0.03 ? f.speed : 0);
+    const tx = f.lon + (Math.sin(f.heading * DEG) * ahead) / kx, ty = f.lat + (Math.cos(f.heading * DEG) * ahead) / ky;
+    const ex = (tx - p.lon) * kx, ey = (ty - p.lat) * ky, err = Math.hypot(ex, ey);
+    if (err > R3.JUMP_M) { p.lon = tx; p.lat = ty; }
+    else {
+      const k = 1 - Math.exp(-dt / R3.EASE_S), cap = (0.9 + err * 0.6) * dt;
+      let sx = ex * k, sy = ey * k;
+      const m = Math.hypot(sx, sy);
+      if (m > cap && m > 1e-9) { sx *= cap / m; sy *= cap / m; }
+      p.lon += sx / kx;
+      p.lat += sy / ky;
+    }
+    const turn = angle(f.heading - p.heading), e = 1 - Math.exp(-dt * 4);
+    p.heading += turn * e;
+    p.pitch += (f.pitch - p.pitch) * e;
+    p.roll += (f.roll - p.roll) * e;
+    let busy = err > 0.01 || Math.abs(turn) > 0.3
+      || Math.abs(f.pitch - p.pitch) > 0.1 || Math.abs(f.roll - p.roll) > 0.1
+      || ((now - f.at) / 1000 < R3.AHEAD_S && Math.abs(f.speed) > 0.03);
+    if (this.follow.on && this._followFrame(dt)) busy = true;
+    this.map.triggerRepaint();
+    if (busy) this.raf = requestAnimationFrame((ts) => this._tick(ts));
+  }
+
+  _robotLayer() {
+    const { THREE, maplibregl: ml } = this.libs;
+    const me = this;
+    return {
+      id: "gk-robot", type: "custom", renderingMode: "3d",
+      onAdd(map, gl) {
+        this.camera = new THREE.Camera();
+        this.scene = new THREE.Scene();               // x east, y north, z up, in metres
+        const sky = new THREE.HemisphereLight(0xffffff, 0x444444, 1.6);
+        sky.position.set(0, 0, 1);
+        this.scene.add(sky);
+        const sun = new THREE.DirectionalLight(0xffffff, 1.2);
+        sun.position.set(-1, 2, 3);                   // from about where the ground's shading is lit from
+        this.scene.add(sun);
+        const { robot, mower } = buildRobot(THREE);
+        this.robot = robot;
+        me.mower = mower;
+        this.scene.add(robot);
+        this.renderer = new THREE.WebGLRenderer({ canvas: map.getCanvas(), context: gl, antialias: true });
+        this.renderer.autoClear = false;
+      },
+      onRemove() { this.renderer?.dispose(); },
+      render(gl, matrix) {
+        const p = me.pose, map = me.map;
+        if (!p) return;
+        const at = [p.lon, p.lat];
+        const mc = ml.MercatorCoordinate.fromLngLat(at, map.queryTerrainElevation(at) || 0);
+        const mpp = (40075016.686 * Math.cos(p.lat * DEG)) / (512 * 2 ** map.getZoom());
+        const s = mc.meterInMercatorCoordinateUnits() * Math.max(1, (R3.MIN_PX * mpp) / R3.LEN);
+        const x = map.getTerrain()?.exaggeration || 1;    // a taller ground: the tilt drawn taller to match
+        const nose = Math.atan(x * Math.tan(-(p.pitch || 0) * DEG));
+        const left = Math.atan(x * Math.tan((p.roll || 0) * DEG));
+        this.robot.rotation.set(nose, left, -(p.heading || 0) * DEG, "ZXY");
+        me._mowerOnGround(p, s / mc.meterInMercatorCoordinateUnits());
+        const M = THREE.Matrix4;
+        const place = new M().makeTranslation(mc.x, mc.y, mc.z).scale(new THREE.Vector3(s, -s, s));
+        this.camera.projectionMatrix = new M().fromArray(matrix).multiply(place);
+        this.renderer.resetState();
+        this.renderer.render(this.scene, this.camera);
+      },
+    };
+  }
+
+  /* The mower lies on the ground under the hitch: where the slope under it differs from the slope under the tracks
+   * it turns about the hitch by the difference (at most R3.MOWER_PITCH / MOWER_ROLL), eased. `k`: how much larger
+   * than life the model is drawn. */
+  _mowerOnGround(p, k) {
+    const m = this.mower, map = this.map;
+    if (!m) return;
+    const h = (p.heading || 0) * DEG, [kx, ky] = metres(p.lat);
+    const ground = (x, y) => map.queryTerrainElevation(
+      [p.lon + (k * (x * Math.cos(h) + y * Math.sin(h))) / kx, p.lat + (k * (y * Math.cos(h) - x * Math.sin(h))) / ky]);
+    const back = ground(0, -0.66), hitch = ground(0, 0.13), front = ground(0, 0.74);
+    const cl = ground(-0.3, -0.27), cr = ground(0.3, -0.27), ml = ground(-0.35, 0.44), mr = ground(0.35, 0.44);
+    let pitch = 0, roll = 0;
+    if ([back, hitch, front, cl, cr, ml, mr].every((v) => typeof v === "number")) {
+      const lim = (v, deg) => Math.max(-deg * DEG, Math.min(deg * DEG, v));
+      pitch = lim(Math.atan2(front - hitch, 0.61 * k) - Math.atan2(hitch - back, 0.79 * k), R3.MOWER_PITCH);
+      roll = lim(Math.atan2(ml - mr, 0.7 * k) - Math.atan2(cl - cr, 0.6 * k), R3.MOWER_ROLL);
+    }
+    m.rotation.x += (pitch - m.rotation.x) * 0.25;
+    m.rotation.y += (roll - m.rotation.y) * 0.25;
+  }
+
+  /* Following: a drag lets go, a right-drag (two fingers) moves the camera round the robot and it keeps that angle,
+   * and the camera holds still while a finger or button is on the map. */
+  _gestures() {
+    const mp = this.map, f = this.follow, box = mp.getCanvasContainer(), down = new Set();
+    const free = () => { if (!f.hands) return; f.hands = false; if (f.on) this._kick(); };
+    this._lift = (e) => { down.delete(e.pointerId); if (!down.size) free(); };
+    this._blur = () => { down.clear(); free(); };
+    box.addEventListener("pointerdown", (e) => { down.add(e.pointerId); f.hands = true; });
+    box.addEventListener("wheel", () => { f.wheelAt = performance.now(); }, { passive: true });
+    window.addEventListener("pointerup", this._lift);
+    window.addEventListener("pointercancel", this._lift);
+    window.addEventListener("blur", this._blur);
+    mp.on("dragstart", (e) => { if (e.originalEvent && f.on) this.setFollow(false); });
+    mp.on("rotatestart", (e) => { if (e.originalEvent) f.turning = true; });
+    mp.on("zoomend", (e) => { if (e.originalEvent && f.on) this._kick(); });
+    mp.on("rotateend", () => {
+      if (!f.turning) return;
+      f.turning = false;
+      if (f.on && f.cam !== null) f.offset = angle(mp.getBearing() - f.cam);
+    });
+  }
+
+  _ahead(p) {
+    const [kx, ky] = metres(p.lat);
+    return [p.lon + (Math.sin(p.heading * DEG) * R3.FOLLOW_LEAD) / kx,
+      p.lat + (Math.cos(p.heading * DEG) * R3.FOLLOW_LEAD) / ky];
+  }
+
+  /* Follow on: fly behind the robot (and to one side), then stay with it. Off: back to the whole yard when `fit`. */
+  setFollow(on, fit = false) {
+    const f = this.follow;
+    on = !!on && !!this.ready && !!this.pose;
+    if (on !== f.on) {
+      f.on = on;
+      if (on) {
+        const p = this.pose;
+        f.cam = p.heading;
+        f.offset = R3.FOLLOW_SIDE;
+        this.map.easeTo({ center: this._ahead(p), bearing: p.heading + f.offset, zoom: Math.max(this.map.getZoom(), 21),
+          pitch: 62, duration: 900 });
+        setTimeout(() => this._kick(), 950);
+      } else if (fit) {
+        this.map.fitBounds(this.fit, { padding: 24, pitch: 55, bearing: 0, duration: 700 });
+      }
+    }
+    this.onFollow(f.on);
+    return f.on;
+  }
+
+  /* One frame of following: turn toward the robot's heading (at most R3.FOLLOW_TURN°/s) and keep it in view. True
+   * while the camera is still turning. */
+  _followFrame(dt) {
+    const mp = this.map, f = this.follow, p = this.pose;
+    if (!p || mp.isEasing() || f.hands || performance.now() - f.wheelAt < 400) return true;
+    if (f.cam === null) f.cam = p.heading;
+    const d = angle(p.heading - f.cam), cap = R3.FOLLOW_TURN * dt;
+    f.cam += Math.max(-cap, Math.min(cap, d * (1 - Math.exp(-dt * 2.5))));
+    mp.jumpTo(f.turning ? { center: this._ahead(p) } : { center: this._ahead(p), bearing: f.cam + f.offset });
+    return Math.abs(d) > 0.5;
+  }
+
+  destroy() {
+    this.dead = true;
+    cancelAnimationFrame(this.raf);
+    clearTimeout(this.trackTimer);
+    window.removeEventListener("pointerup", this._lift);
+    window.removeEventListener("pointercancel", this._lift);
+    window.removeEventListener("blur", this._blur);
+    try { this.map.remove(); } catch (_) { /* already gone */ }
+  }
+}
+
 const STYLE = `
   :host { display: block; }
   [hidden] { display: none !important; }
@@ -1009,10 +1798,14 @@ const STYLE = `
   .robot .halo { fill: ${C.robot}; fill-opacity: 0.25; }
   .robot .body { fill: ${C.robot}; stroke: #fff; stroke-width: 1.5; vector-effect: non-scaling-stroke; }
   .robot .nose { fill: #fff; }
-  .follow { position: absolute; right: 8px; bottom: 8px; width: 36px; height: 36px; border-radius: 50%; border: none;
+  .gl { width: 100%; height: 100%; }
+  .tools { position: absolute; right: 8px; bottom: 8px; display: flex; gap: 6px; align-items: center; }
+  .tool { height: 36px; min-width: 36px; padding: 0 10px; border-radius: 18px; border: none; box-sizing: border-box;
     background: rgba(14, 19, 17, 0.75); color: #F2F5F3; cursor: pointer; display: flex; align-items: center;
-    justify-content: center; }
-  .follow[aria-pressed="true"] { background: var(--primary-color, #03a9f4); }
+    justify-content: center; font: inherit; font-size: 13px; font-weight: 600; }
+  select.tool { padding: 0 6px; appearance: auto; }
+  .tool.round { padding: 0; width: 36px; }
+  .tool[aria-pressed="true"] { background: var(--primary-color, #03a9f4); }
   .camera { border-radius: 8px; overflow: hidden; }
   .camera hui-picture-entity-card, .camera > * { display: block; }
   .caption { font-size: 12px; color: var(--secondary-text-color); padding: 4px 2px 0; }
